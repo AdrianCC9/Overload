@@ -4,41 +4,77 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CSVExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.folder] }
-    static var writableContentTypes: [UTType] { [.folder] }
+    static var readableContentTypes: [UTType] { [.commaSeparatedText] }
+    static var writableContentTypes: [UTType] { [.commaSeparatedText] }
 
-    var files: [String: String]
+    var csv: String
 
-    init(files: [String: String] = [:]) {
-        self.files = files
+    init(csv: String = "") {
+        self.csv = csv
     }
 
     init(configuration: ReadConfiguration) throws {
-        self.files = [:]
+        if let data = configuration.file.regularFileContents,
+           let text = String(data: data, encoding: .utf8) {
+            self.csv = text
+        } else {
+            self.csv = ""
+        }
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        let wrappers = files.reduce(into: [String: FileWrapper]()) { result, file in
-            result[file.key] = FileWrapper(regularFileWithContents: Data(file.value.utf8))
-        }
-        return FileWrapper(directoryWithFileWrappers: wrappers)
+        FileWrapper(regularFileWithContents: Data(csv.utf8))
     }
 }
 
 @MainActor
 final class CSVExportService {
     func makeExportDocument(context: ModelContext) -> CSVExportDocument {
-        CSVExportDocument(files: [
-            "exercises.csv": exercisesCSV(context),
-            "workout_templates.csv": workoutTemplatesCSV(context),
-            "template_exercises.csv": templateExercisesCSV(context),
-            "template_sets.csv": templateSetsCSV(context),
-            "planned_workouts.csv": plannedWorkoutsCSV(context),
-            "workout_sessions.csv": workoutSessionsCSV(context),
-            "session_exercises.csv": sessionExercisesCSV(context),
-            "session_sets.csv": sessionSetsCSV(context),
-            "analytics_snapshots.csv": analyticsSnapshotsCSV(context)
-        ])
+        CSVExportDocument(csv: loggedTrainingCSV(context))
+    }
+
+    private func loggedTrainingCSV(_ context: ModelContext) -> String {
+        let sessions = fetch(WorkoutSession.self, context: context, sortBy: [SortDescriptor(\.date)])
+        let rows = sessions.flatMap { session in
+            session.orderedExercises.flatMap { sessionExercise in
+                sessionExercise.orderedSets
+                    .filter { $0.completed && $0.reps > 0 }
+                    .map { set in
+                        [
+                            session.id.uuidString,
+                            day(session.date),
+                            session.date.formatted(.dateTime.weekday(.wide)),
+                            session.workoutTemplate?.name ?? "Custom",
+                            session.workoutTemplate?.colorTag.rawValue ?? WorkoutColorTag.red.rawValue,
+                            sessionExercise.exercise?.name ?? "",
+                            mainMuscleName(for: sessionExercise.exercise),
+                            String(set.setNumber),
+                            String(set.reps),
+                            decimal(set.weight),
+                            decimal(set.volume),
+                            decimal(set.estimatedOneRepMax)
+                        ]
+                    }
+            }
+        }
+
+        return makeCSV(
+            header: [
+                "session_id",
+                "date",
+                "day",
+                "workout_name",
+                "workout_color",
+                "exercise_name",
+                "muscle_group",
+                "set_number",
+                "reps",
+                "weight_lbs",
+                "volume_lbs",
+                "estimated_1rm_lbs"
+            ],
+            rows: rows
+        )
     }
 
     private func exercisesCSV(_ context: ModelContext) -> String {
@@ -109,15 +145,14 @@ final class CSVExportService {
                         templateExercise.exercise?.name ?? "",
                         String(set.orderIndex + 1),
                         decimal(set.targetWeight),
-                        String(set.targetReps),
-                        optional(set.targetRPE)
+                        String(set.targetReps)
                     ]
                 }
             }
         }
 
         return makeCSV(
-            header: ["id", "template_exercise_id", "workout_template_id", "workout_name", "exercise_name", "set_number", "target_weight", "target_reps", "target_rpe"],
+            header: ["id", "template_exercise_id", "workout_template_id", "workout_name", "exercise_name", "set_number", "target_weight_lbs", "target_reps"],
             rows: rows
         )
     }
@@ -142,7 +177,7 @@ final class CSVExportService {
     private func workoutSessionsCSV(_ context: ModelContext) -> String {
         let sessions = fetch(WorkoutSession.self, context: context, sortBy: [SortDescriptor(\.date)])
         return makeCSV(
-            header: ["id", "workout_template_id", "workout_name", "date", "duration_minutes", "bodyweight", "notes", "completed_at", "total_volume"],
+            header: ["id", "workout_template_id", "workout_name", "date", "duration_minutes", "bodyweight_lbs", "notes", "completed_at", "total_volume_lbs"],
             rows: sessions.map { session in
                 [
                     session.id.uuidString,
@@ -180,7 +215,7 @@ final class CSVExportService {
         }
 
         return makeCSV(
-            header: ["id", "session_id", "session_date", "workout_name", "exercise_id", "exercise_name", "muscle_group", "order_index", "exercise_volume", "best_estimated_1rm", "notes"],
+            header: ["id", "session_id", "session_date", "workout_name", "exercise_id", "exercise_name", "muscle_group", "order_index", "exercise_volume_lbs", "best_estimated_1rm_lbs", "notes"],
             rows: rows
         )
     }
@@ -201,7 +236,6 @@ final class CSVExportService {
                         String(set.reps),
                         decimal(set.volume),
                         decimal(set.estimatedOneRepMax),
-                        optional(set.rpe),
                         String(set.isWarmup),
                         String(set.isFailure),
                         String(set.completed),
@@ -219,11 +253,10 @@ final class CSVExportService {
                 "exercise_name",
                 "muscle_group",
                 "set_number",
-                "weight",
+                "weight_lbs",
                 "reps",
-                "volume",
-                "estimated_1rm",
-                "rpe",
+                "volume_lbs",
+                "estimated_1rm_lbs",
                 "is_warmup",
                 "is_failure",
                 "completed",
@@ -284,5 +317,11 @@ final class CSVExportService {
 
     private func decimal(_ value: Double) -> String {
         String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+
+    private func mainMuscleName(for exercise: Exercise?) -> String {
+        guard let exercise else { return ExerciseCategory.other.rawValue }
+        let inferredCategory = ExerciseMuscleRepository.category(for: exercise.name)
+        return (inferredCategory == .other ? exercise.category : inferredCategory).rawValue
     }
 }

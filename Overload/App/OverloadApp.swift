@@ -7,6 +7,10 @@ struct OverloadApp: App {
 
     init() {
         do {
+            if let applicationSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                try FileManager.default.createDirectory(at: applicationSupportURL, withIntermediateDirectories: true)
+            }
+
             let schema = Schema([
                 UserProfile.self,
                 Exercise.self,
@@ -34,4 +38,3 @@ struct OverloadApp: App {
         }
     }
 }
-

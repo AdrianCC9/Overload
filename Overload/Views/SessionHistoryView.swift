@@ -91,7 +91,7 @@ private struct SessionHistoryCard: View {
                         .foregroundStyle(OverloadTheme.secondaryText)
 
                     HStack(spacing: 8) {
-                        SessionBadge(text: "\(Int(session.totalVolume)) volume")
+                        SessionBadge(text: "\(Int(session.totalVolume)) lbs volume")
                         SessionBadge(text: "\(session.sessionExercises.count) exercises")
                         SessionBadge(text: session.isCompleted ? "Completed" : "Draft")
                     }
@@ -127,4 +127,3 @@ private struct SessionBadge: View {
             .clipShape(Capsule())
     }
 }
-

@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class Exercise {
+final class Exercise: Identifiable {
     var id: UUID
     var name: String
     var categoryRaw: String
@@ -36,4 +36,3 @@ final class Exercise {
         set { defaultUnitRaw = newValue.rawValue }
     }
 }
-

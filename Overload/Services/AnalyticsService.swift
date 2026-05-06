@@ -46,6 +46,19 @@ struct PersonalRecord: Identifiable, Equatable {
     var date: Date
 }
 
+struct WeekInterval: Equatable {
+    var start: Date
+    var end: Date
+
+    var displayTitle: String {
+        "Weekly Volume (\(format(start))-\(format(end)))"
+    }
+
+    private func format(_ date: Date) -> String {
+        date.formatted(.dateTime.month(.abbreviated).day())
+    }
+}
+
 @MainActor
 final class AnalyticsService {
     private let context: ModelContext
@@ -124,7 +137,7 @@ final class AnalyticsService {
             insights.append(
                 ProgressInsight(
                     title: "Best volume day",
-                    detail: "\(DateFormatters.isoDay.string(from: best.date)) was your highest-volume \(exercise.name) session at \(Int(best.volume)) total pounds."
+                    detail: "\(DateFormatters.isoDay.string(from: best.date)) was your highest-volume \(exercise.name) session at \(Int(best.volume)) lbs."
                 )
             )
         }
@@ -135,7 +148,7 @@ final class AnalyticsService {
     func dashboardStats() -> DashboardStats {
         let sessions = fetchCompletedSessions()
         let today = Date.now.startOfDay
-        let weekStart = today.weekStart
+        let weekStart = today.sundayWeekStart
         let weekEnd = weekStart.addingDays(7)
         let monthStart = today.monthStart
         let monthEnd = monthStart.addingMonths(1)
@@ -156,7 +169,7 @@ final class AnalyticsService {
 
     func muscleGroupSetSummaries(referenceDate: Date = .now) -> [MuscleGroupSetSummary] {
         let sessions = fetchCompletedSessions()
-        let currentWeekStart = referenceDate.weekStart
+        let currentWeekStart = referenceDate.sundayWeekStart
         let currentWeekEnd = currentWeekStart.addingDays(7)
         let loggedWeeks = max(Set(sessions.map { weekKey(for: $0.date) }).count, 1)
 
@@ -167,8 +180,9 @@ final class AnalyticsService {
 
         let counts = sessions.reduce(into: [String: SetAccumulator]()) { result, session in
             for sessionExercise in session.sessionExercises {
-                let group = sessionExercise.exercise?.category.rawValue ?? "Other"
                 let setCount = sessionExercise.workingSets.count
+                guard setCount > 0 else { continue }
+                let group = mainMuscleName(for: sessionExercise.exercise)
                 result[group, default: SetAccumulator()].total += setCount
 
                 if session.date >= currentWeekStart && session.date < currentWeekEnd {
@@ -195,6 +209,11 @@ final class AnalyticsService {
             }
     }
 
+    func currentWeekInterval(referenceDate: Date = .now) -> WeekInterval {
+        let start = referenceDate.sundayWeekStart
+        return WeekInterval(start: start, end: start.addingDays(6))
+    }
+
     func mostImprovedExercise() -> Exercise? {
         let exercises = ((try? context.fetch(FetchDescriptor<Exercise>())) ?? [])
         let improvements = exercises.compactMap { exercise -> (exercise: Exercise, change: Double)? in
@@ -211,7 +230,8 @@ final class AnalyticsService {
         let totals = fetchCompletedSessions()
             .flatMap(\.sessionExercises)
             .reduce(into: [String: Double]()) { result, sessionExercise in
-                let group = sessionExercise.exercise?.category.rawValue ?? "Other"
+                guard !sessionExercise.workingSets.isEmpty else { return }
+                let group = mainMuscleName(for: sessionExercise.exercise)
                 result[group, default: 0] += sessionExercise.exerciseVolume
             }
 
@@ -223,6 +243,7 @@ final class AnalyticsService {
     func exerciseFrequency(limit: Int = 5) -> [ExerciseFrequency] {
         let counts = fetchCompletedSessions()
             .flatMap(\.sessionExercises)
+            .filter { !$0.workingSets.isEmpty }
             .compactMap { $0.exercise?.name }
             .reduce(into: [String: Int]()) { result, exercise in
                 result[exercise, default: 0] += 1
@@ -240,7 +261,8 @@ final class AnalyticsService {
         let groupedSets = sessions
             .flatMap(\.sessionExercises)
             .reduce(into: [String: Int]()) { result, sessionExercise in
-                let group = sessionExercise.exercise?.category.rawValue ?? "Other"
+                guard !sessionExercise.workingSets.isEmpty else { return }
+                let group = mainMuscleName(for: sessionExercise.exercise)
                 result[group, default: 0] += sessionExercise.workingSets.count
             }
 
@@ -267,12 +289,12 @@ final class AnalyticsService {
                 if sessionExercise.exerciseVolume > (bestVolumeByExercise[exerciseName] ?? 0) {
                     bestVolumeByExercise[exerciseName] = sessionExercise.exerciseVolume
                     records.append(
-                        PersonalRecord(
-                            exerciseName: exerciseName,
-                            title: "Highest session volume",
-                            value: "\(Int(sessionExercise.exerciseVolume))",
-                            date: session.date
-                        )
+                            PersonalRecord(
+                                exerciseName: exerciseName,
+                                title: "Highest session volume",
+                                value: "\(Int(sessionExercise.exerciseVolume)) lbs",
+                                date: session.date
+                            )
                     )
                 }
 
@@ -283,7 +305,7 @@ final class AnalyticsService {
                             PersonalRecord(
                                 exerciseName: exerciseName,
                                 title: "Heaviest weight",
-                                value: "\(Int(set.weight)) x \(set.reps)",
+                                value: "\(set.reps) x \(Int(set.weight)) lbs",
                                 date: session.date
                             )
                         )
@@ -295,7 +317,7 @@ final class AnalyticsService {
                             PersonalRecord(
                                 exerciseName: exerciseName,
                                 title: "Best estimated 1RM",
-                                value: "\(Int(set.estimatedOneRepMax))",
+                                value: "\(Int(set.estimatedOneRepMax)) lbs",
                                 date: session.date
                             )
                         )
@@ -307,7 +329,7 @@ final class AnalyticsService {
                         records.append(
                             PersonalRecord(
                                 exerciseName: exerciseName,
-                                title: "Most reps at \(Int(set.weight))",
+                                title: "Most reps at \(Int(set.weight)) lbs",
                                 value: "\(set.reps) reps",
                                 date: session.date
                             )
@@ -323,9 +345,54 @@ final class AnalyticsService {
             .map { $0 }
     }
 
+    func maxWeightRecords(limit: Int = 5) -> [PersonalRecord] {
+        let sessions = fetchCompletedSessions().sorted { $0.date < $1.date }
+        var bestByExercise: [String: (weight: Double, reps: Int, date: Date)] = [:]
+
+        for session in sessions {
+            for sessionExercise in session.sessionExercises {
+                guard let exerciseName = sessionExercise.exercise?.name else { continue }
+
+                for set in sessionExercise.workingSets where set.weight > 0 {
+                    let currentBest = bestByExercise[exerciseName]?.weight ?? 0
+                    if set.weight > currentBest {
+                        bestByExercise[exerciseName] = (set.weight, set.reps, session.date)
+                    }
+                }
+            }
+        }
+
+        return bestByExercise
+            .map { exerciseName, record in
+                PersonalRecord(
+                    exerciseName: exerciseName,
+                    title: "\(record.reps) reps",
+                    value: "\(formatWeight(record.weight)) lbs",
+                    date: record.date
+                )
+            }
+            .sorted {
+                weightValue(from: $0.value) > weightValue(from: $1.value)
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    func loggedExercises() -> [Exercise] {
+        let seenExerciseIDs = Set(fetchCompletedSessions()
+            .flatMap(\.sessionExercises)
+            .filter { !$0.workingSets.isEmpty }
+            .compactMap { $0.exercise?.id })
+
+        let descriptor = FetchDescriptor<Exercise>(sortBy: [SortDescriptor(\.name)])
+        return ((try? context.fetch(descriptor)) ?? []).filter { seenExerciseIDs.contains($0.id) }
+    }
+
     private func fetchCompletedSessions() -> [WorkoutSession] {
         let descriptor = FetchDescriptor<WorkoutSession>(sortBy: [SortDescriptor(\.date)])
-        return ((try? context.fetch(descriptor)) ?? []).filter(\.isCompleted)
+        return ((try? context.fetch(descriptor)) ?? []).filter { session in
+            session.isCompleted || session.sessionExercises.contains { !$0.workingSets.isEmpty }
+        }
     }
 
     private func trainingStreak(from sessions: [WorkoutSession]) -> Int {
@@ -352,7 +419,8 @@ final class AnalyticsService {
     private func mostTrainedMuscleGroup(from sessions: [WorkoutSession]) -> String {
         let counts = sessions
             .flatMap(\.sessionExercises)
-            .compactMap { $0.exercise?.category.rawValue }
+            .filter { !$0.workingSets.isEmpty }
+            .map { mainMuscleName(for: $0.exercise) }
             .reduce(into: [String: Int]()) { result, category in
                 result[category, default: 0] += 1
             }
@@ -369,7 +437,20 @@ final class AnalyticsService {
     }
 
     private func weekKey(for date: Date) -> String {
-        let components = Calendar.overload.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-        return "\(components.yearForWeekOfYear ?? 0)-\(components.weekOfYear ?? 0)"
+        DateFormatters.isoDay.string(from: date.sundayWeekStart)
+    }
+
+    private func mainMuscleName(for exercise: Exercise?) -> String {
+        guard let exercise else { return ExerciseCategory.other.rawValue }
+        let inferredCategory = ExerciseMuscleRepository.category(for: exercise.name)
+        return (inferredCategory == .other ? exercise.category : inferredCategory).rawValue
+    }
+
+    private func formatWeight(_ weight: Double) -> String {
+        weight.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(weight)) : String(format: "%.1f", weight)
+    }
+
+    private func weightValue(from text: String) -> Double {
+        Double(text.components(separatedBy: " ").first ?? "") ?? 0
     }
 }

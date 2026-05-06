@@ -22,18 +22,21 @@ final class WorkoutBuilderViewModel: ObservableObject {
         exercises = exerciseRepository.fetchExercises()
     }
 
-    func createTemplate(name: String, colorTag: WorkoutColorTag) {
+    @discardableResult
+    func createTemplate(name: String, colorTag: WorkoutColorTag) -> WorkoutTemplate? {
         do {
-            _ = try workoutRepository.createTemplate(name: name, colorTag: colorTag)
+            let template = try workoutRepository.createTemplate(name: name, colorTag: colorTag)
             reload()
+            return template
         } catch {
             errorMessage = error.localizedDescription
+            return nil
         }
     }
 
     func createExercise(name: String, category: ExerciseCategory, unit: MeasurementUnit = .pounds) {
         do {
-            try exerciseRepository.createExercise(name: name, category: category, unit: unit)
+            _ = try exerciseRepository.createExercise(name: name, category: category, unit: unit)
             reload()
         } catch {
             errorMessage = error.localizedDescription
@@ -51,6 +54,19 @@ final class WorkoutBuilderViewModel: ObservableObject {
 
     func addExercise(_ exercise: Exercise, to template: WorkoutTemplate) {
         do {
+            try workoutRepository.addExercise(exercise, to: template)
+            reload()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func addCustomExercise(named name: String, to template: WorkoutTemplate) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return }
+
+        do {
+            let exercise = try exerciseRepository.findOrCreateExercise(name: trimmedName)
             try workoutRepository.addExercise(exercise, to: template)
             reload()
         } catch {

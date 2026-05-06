@@ -39,11 +39,10 @@ final class WorkoutRepository {
         try context.save()
     }
 
-    func addSet(to templateExercise: TemplateExercise, reps: Int = 8, weight: Double = 0, rpe: Double? = nil) throws {
+    func addSet(to templateExercise: TemplateExercise, reps: Int = 8, weight: Double = 0) throws {
         let set = TemplateSet(
             targetReps: reps,
             targetWeight: weight,
-            targetRPE: rpe,
             orderIndex: templateExercise.orderedSets.count
         )
         context.insert(set)
@@ -107,17 +106,19 @@ final class WorkoutRepository {
         fetchPlannedWorkouts().filter { $0.plannedDate.isSameDay(as: date) }
     }
 
-    func plan(template: WorkoutTemplate, on date: Date) throws {
+    @discardableResult
+    func plan(template: WorkoutTemplate, on date: Date) throws -> PlannedWorkout {
         let plannedDate = date.startOfDay
-        guard !fetchPlannedWorkouts().contains(where: {
+        if let existing = fetchPlannedWorkouts().first(where: {
             $0.plannedDate.isSameDay(as: plannedDate) && $0.workoutTemplate?.id == template.id
-        }) else {
-            return
+        }) {
+            return existing
         }
 
         let planned = PlannedWorkout(workoutTemplate: template, plannedDate: plannedDate)
         context.insert(planned)
         try context.save()
+        return planned
     }
 
     func move(_ plannedWorkout: PlannedWorkout, to date: Date) throws {

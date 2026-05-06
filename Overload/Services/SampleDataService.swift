@@ -85,7 +85,6 @@ final class SampleDataService {
                         setNumber: setNumber,
                         reps: defaults.reps,
                         weight: defaults.weight,
-                        rpe: setNumber == 3 ? 8.5 : 7.5,
                         completed: true
                     )
                     context.insert(set)
@@ -98,7 +97,6 @@ final class SampleDataService {
                     set.weight = benchBase
                     set.reps = set.setNumber == 2 ? 7 : 8
                 }
-                set.rpe = set.setNumber == 3 ? 8.5 : 7.5
                 set.completed = true
             }
         }

@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class PlannedWorkout {
+final class PlannedWorkout: Identifiable {
     var id: UUID
     var workoutTemplate: WorkoutTemplate?
     var plannedDate: Date

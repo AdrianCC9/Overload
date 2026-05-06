@@ -39,9 +39,8 @@ final class WorkoutLoggingService {
         let previous = sessionExercise.orderedSets.last
         let set = SessionSet(
             setNumber: nextNumber,
-            reps: previous?.reps ?? 8,
+            reps: previous?.reps ?? 0,
             weight: previous?.weight ?? 0,
-            rpe: previous?.rpe,
             completed: false
         )
         context.insert(set)

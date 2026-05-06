@@ -9,12 +9,23 @@ final class WorkoutLoggerViewModel: ObservableObject {
     private let context: ModelContext
     private let loggingService: WorkoutLoggingService
     private let plannedWorkout: PlannedWorkout?
+    private let focusedExerciseID: UUID?
 
-    init(context: ModelContext, plannedWorkout: PlannedWorkout? = nil, session: WorkoutSession? = nil) {
+    init(
+        context: ModelContext,
+        plannedWorkout: PlannedWorkout? = nil,
+        session: WorkoutSession? = nil,
+        focusedExerciseID: UUID? = nil
+    ) {
         self.context = context
         self.loggingService = WorkoutLoggingService(context: context)
         self.plannedWorkout = plannedWorkout
         self.session = session
+        self.focusedExerciseID = focusedExerciseID
+    }
+
+    var isFocusedExerciseMode: Bool {
+        focusedExerciseID != nil
     }
 
     func load() {
@@ -32,6 +43,22 @@ final class WorkoutLoggerViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func visibleExercises(in session: WorkoutSession) -> [SessionExercise] {
+        guard let focusedExerciseID else { return session.orderedExercises }
+        return session.orderedExercises.filter { $0.exercise?.id == focusedExerciseID }
+    }
+
+    func completeVisibleSetsAndSave() {
+        guard let session else {
+            save()
+            return
+        }
+
+        completeSets(in: visibleExercises(in: session))
+        save()
+        objectWillChange.send()
     }
 
     func addSet(to exercise: SessionExercise) {
@@ -55,6 +82,7 @@ final class WorkoutLoggerViewModel: ObservableObject {
     func finish() {
         guard let session else { return }
         do {
+            completeSets(in: session.orderedExercises)
             try loggingService.finish(session)
             objectWillChange.send()
         } catch {
@@ -71,5 +99,12 @@ final class WorkoutLoggerViewModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
-}
 
+    private func completeSets(in exercises: [SessionExercise]) {
+        for exercise in exercises {
+            for set in exercise.orderedSets where set.reps > 0 {
+                set.completed = true
+            }
+        }
+    }
+}

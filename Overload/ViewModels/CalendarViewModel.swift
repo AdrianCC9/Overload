@@ -39,7 +39,7 @@ final class CalendarViewModel: ObservableObject {
         }
         workoutsByDay = Dictionary(grouping: repository.plannedWorkouts(in: first...last)) { $0.plannedDate.startOfDay }
         sessionsByDay = Dictionary(
-            grouping: sessionRepository.fetchCompletedSessions().filter { (first...last).contains($0.date.startOfDay) }
+            grouping: sessionRepository.fetchLoggedSessions().filter { (first...last).contains($0.date.startOfDay) }
         ) { $0.date.startOfDay }
     }
 
@@ -47,12 +47,15 @@ final class CalendarViewModel: ObservableObject {
         repository.fetchTemplates()
     }
 
-    func plan(_ template: WorkoutTemplate, on date: Date) {
+    @discardableResult
+    func plan(_ template: WorkoutTemplate, on date: Date) -> PlannedWorkout? {
         do {
-            try repository.plan(template: template, on: date)
+            let workout = try repository.plan(template: template, on: date)
             reload()
+            return workout
         } catch {
             errorMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -67,6 +70,9 @@ final class CalendarViewModel: ObservableObject {
 
     func changeMonth(by amount: Int) {
         monthDate = monthDate.addingMonths(amount).monthStart
+        if !Calendar.overload.isDate(selectedDate, equalTo: monthDate, toGranularity: .month) {
+            selectedDate = monthDate
+        }
         reload()
     }
 

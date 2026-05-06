@@ -8,60 +8,76 @@ struct SetInputRow: View {
     var onSave: () -> Void
 
     var body: some View {
-        GridRow {
+        HStack(spacing: 10) {
             Text("\(set.setNumber)")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(OverloadTheme.secondaryText)
-
-            TextField("Weight", value: $set.weight, format: .number.precision(.fractionLength(0...1)))
-                .keyboardType(.decimalPad)
-                .disabled(isReadOnly)
-                .textFieldStyle(.plain)
-                .onSubmit(onSave)
+                .font(.headline.weight(.heavy))
+                .foregroundStyle(OverloadTheme.primaryText)
+                .frame(width: 48, height: 54)
+                .background(OverloadTheme.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous)
+                        .stroke(OverloadTheme.accent.opacity(0.55), lineWidth: 1.5)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
 
             TextField("Reps", value: $set.reps, format: .number)
                 .keyboardType(.numberPad)
                 .disabled(isReadOnly)
                 .textFieldStyle(.plain)
-                .onSubmit(onSave)
+                .onSubmit(completeAndSave)
+                .font(.headline.weight(.heavy))
+                .foregroundStyle(OverloadTheme.accent)
+                .padding(.horizontal, 14)
+                .frame(width: 78, height: 54)
+                .background(OverloadTheme.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous)
+                        .stroke(OverloadTheme.accent.opacity(0.55), lineWidth: 1.5)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
 
-            TextField("RPE", text: Binding(
-                get: { set.rpe.map { String($0) } ?? "" },
-                set: { set.rpe = Double($0) }
-            ))
+            TextField("Weight", value: $set.weight, format: .number.precision(.fractionLength(0...1)))
                 .keyboardType(.decimalPad)
                 .disabled(isReadOnly)
                 .textFieldStyle(.plain)
-                .onSubmit(onSave)
-
-            Button {
-                set.completed.toggle()
-                HapticFeedback.light()
-                onSave()
-            } label: {
-                Image(systemName: set.completed ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(set.completed ? OverloadTheme.success : OverloadTheme.mutedText)
-                    .font(.title3)
-            }
-            .disabled(isReadOnly)
+                .onSubmit(completeAndSave)
+                .font(.headline.weight(.heavy))
+                .foregroundStyle(OverloadTheme.accent)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(OverloadTheme.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous)
+                        .stroke(OverloadTheme.accent.opacity(0.55), lineWidth: 1.5)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
+                .overlay(alignment: .trailing) {
+                    Text("lbs")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(OverloadTheme.mutedText)
+                        .padding(.trailing, 12)
+                }
 
             Menu {
-                Button(set.isWarmup ? "Mark Working Set" : "Mark Warm-up") {
-                    set.isWarmup.toggle()
-                    onSave()
-                }
-                Button(set.isFailure ? "Clear Failure" : "Mark Failure") {
-                    set.isFailure.toggle()
-                    onSave()
-                }
                 Button("Delete Set", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis")
                     .foregroundStyle(OverloadTheme.mutedText)
+                    .frame(width: 28, height: 54)
             }
             .disabled(isReadOnly)
         }
         .foregroundStyle(OverloadTheme.primaryText)
-        .font(.subheadline)
+        .onChange(of: set.reps) { _, _ in
+            completeAndSave()
+        }
+        .onChange(of: set.weight) { _, _ in
+            completeAndSave()
+        }
+    }
+
+    private func completeAndSave() {
+        set.completed = set.reps > 0
+        onSave()
     }
 }

@@ -8,6 +8,14 @@ struct WorkoutLoggerView: View {
 
     var plannedWorkout: PlannedWorkout? = nil
     var existingSession: WorkoutSession? = nil
+    var focusedExerciseID: UUID? = nil
+
+    private var loggerTitle: String {
+        if focusedExerciseID != nil {
+            return "Log Exercise"
+        }
+        return plannedWorkout?.workoutTemplate?.name ?? existingSession?.workoutTemplate?.name ?? "Workout"
+    }
 
     var body: some View {
         NavigationStack {
@@ -22,7 +30,7 @@ struct WorkoutLoggerView: View {
                     ProgressView()
                 }
             }
-            .navigationTitle(plannedWorkout?.workoutTemplate?.name ?? existingSession?.workoutTemplate?.name ?? "Workout")
+            .navigationTitle(loggerTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -37,7 +45,8 @@ struct WorkoutLoggerView: View {
                     let model = WorkoutLoggerViewModel(
                         context: modelContext,
                         plannedWorkout: plannedWorkout,
-                        session: existingSession
+                        session: existingSession,
+                        focusedExerciseID: focusedExerciseID
                     )
                     model.load()
                     viewModel = model
@@ -57,6 +66,21 @@ private struct LoggerContentView: View {
         session.isCompleted && !editingCompletedSession
     }
 
+    private var visibleExercises: [SessionExercise] {
+        viewModel.visibleExercises(in: session)
+    }
+
+    private var screenTitle: String {
+        if viewModel.isFocusedExerciseMode {
+            return visibleExercises.first?.exercise?.name ?? "Exercise"
+        }
+        return session.workoutTemplate?.name ?? "Workout"
+    }
+
+    private var visibleVolume: Double {
+        visibleExercises.reduce(0) { $0 + $1.exerciseVolume }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
@@ -64,11 +88,15 @@ private struct LoggerContentView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(session.date.formatted(.dateTime.weekday(.wide).month().day()))
-                                    .font(.headline)
+                                Text(screenTitle)
+                                    .font(.title2.weight(.heavy))
                                     .foregroundStyle(OverloadTheme.primaryText)
+
+                                Text(session.date.formatted(.dateTime.weekday(.wide).month().day()))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(OverloadTheme.secondaryText)
                                 Text(session.isCompleted ? "Completed" : "In progress")
-                                    .font(.subheadline)
+                                    .font(.caption.weight(.bold))
                                     .foregroundStyle(session.isCompleted ? OverloadTheme.success : OverloadTheme.secondaryText)
                             }
                             Spacer()
@@ -80,52 +108,20 @@ private struct LoggerContentView: View {
                             }
                         }
 
-                        TextField("Workout notes", text: $session.notes, axis: .vertical)
-                            .lineLimit(2...5)
-                            .disabled(isReadOnly)
-                            .padding(10)
-                            .background(OverloadTheme.elevated)
-                            .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
-                            .onSubmit(viewModel.save)
-
-                        Grid(horizontalSpacing: 12, verticalSpacing: 10) {
-                            GridRow {
-                                Text("Duration")
-                                Text("Bodyweight")
-                            }
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(OverloadTheme.mutedText)
-
-                            GridRow {
-                                TextField("Minutes", value: $session.durationMinutes, format: .number)
-                                    .keyboardType(.numberPad)
-                                    .disabled(isReadOnly)
-                                    .onSubmit(viewModel.save)
-
-                                TextField("Weight", text: Binding(
-                                    get: { session.bodyweight.map { String($0) } ?? "" },
-                                    set: { session.bodyweight = Double($0) }
-                                ))
-                                .keyboardType(.decimalPad)
-                                .disabled(isReadOnly)
-                                .onSubmit(viewModel.save)
-                            }
-                            .font(.subheadline)
-                            .foregroundStyle(OverloadTheme.primaryText)
-                        }
-
                         HStack {
-                            StatPill(title: "Volume", value: "\(Int(session.totalVolume))")
-                            StatPill(title: "Exercises", value: "\(session.sessionExercises.count)")
-                            StatPill(title: "Sets", value: "\(session.sessionExercises.flatMap(\.sessionSets).count)")
+                            StatPill(title: "Volume", value: "\(Int(visibleVolume)) lbs")
+                            StatPill(title: "Exercises", value: "\(visibleExercises.count)")
+                            StatPill(title: "Sets", value: "\(visibleExercises.flatMap(\.sessionSets).count)")
                         }
                     }
                 }
 
-                ForEach(session.orderedExercises) { sessionExercise in
+                ForEach(visibleExercises) { sessionExercise in
                     SessionExerciseLoggerCard(
                         sessionExercise: sessionExercise,
                         isReadOnly: isReadOnly,
+                        showsTitle: !viewModel.isFocusedExerciseMode,
+                        autoCreateFirstSet: viewModel.isFocusedExerciseMode,
                         onAddSet: { viewModel.addSet(to: sessionExercise) },
                         onRemoveSet: viewModel.removeSet,
                         onSave: viewModel.save
@@ -139,6 +135,12 @@ private struct LoggerContentView: View {
                             editingCompletedSession = false
                             HapticFeedback.success()
                         }
+                    }
+                } else if viewModel.isFocusedExerciseMode {
+                    RedPrimaryButton(title: "Done", systemImage: "checkmark") {
+                        viewModel.completeVisibleSetsAndSave()
+                        HapticFeedback.success()
+                        onClose()
                     }
                 } else {
                     RedPrimaryButton(title: "Finish Workout", systemImage: "flag.checkered") {
@@ -156,6 +158,8 @@ private struct LoggerContentView: View {
 private struct SessionExerciseLoggerCard: View {
     @Bindable var sessionExercise: SessionExercise
     var isReadOnly: Bool
+    var showsTitle: Bool
+    var autoCreateFirstSet: Bool
     var onAddSet: () -> Void
     var onRemoveSet: (SessionSet) -> Void
     var onSave: () -> Void
@@ -163,33 +167,28 @@ private struct SessionExerciseLoggerCard: View {
     var body: some View {
         DarkCard {
             VStack(alignment: .leading, spacing: 14) {
-                ExerciseRow(
-                    name: sessionExercise.exercise?.name ?? "Exercise",
-                    category: sessionExercise.exercise?.category.rawValue ?? "Other",
-                    detail: "\(Int(sessionExercise.exerciseVolume)) volume"
-                )
+                if showsTitle {
+                    ExerciseRow(
+                        name: sessionExercise.exercise?.name ?? "Exercise",
+                        category: sessionExercise.exercise?.category.rawValue ?? "Other",
+                        detail: "\(Int(sessionExercise.exerciseVolume)) lbs volume"
+                    )
+                }
 
-                TextField("Exercise notes", text: $sessionExercise.notes, axis: .vertical)
-                    .lineLimit(1...4)
-                    .disabled(isReadOnly)
-                    .font(.subheadline)
-                    .padding(10)
-                    .background(OverloadTheme.elevated)
-                    .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
-                    .onSubmit(onSave)
+                HStack {
+                    Text("SET")
+                        .frame(width: 48, alignment: .leading)
+                    Text("REPS")
+                        .frame(width: 78, alignment: .leading)
+                    Text("WEIGHT")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("")
+                        .frame(width: 84)
+                }
+                .font(.caption.weight(.heavy))
+                .foregroundStyle(OverloadTheme.mutedText)
 
-                Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                    GridRow {
-                        Text("#")
-                        Text("Weight")
-                        Text("Reps")
-                        Text("RPE")
-                        Text("")
-                        Text("")
-                    }
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(OverloadTheme.mutedText)
-
+                VStack(spacing: 12) {
                     ForEach(sessionExercise.orderedSets) { set in
                         SetInputRow(
                             set: set,
@@ -209,6 +208,11 @@ private struct SessionExerciseLoggerCard: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isReadOnly)
+            }
+        }
+        .onAppear {
+            if autoCreateFirstSet, sessionExercise.orderedSets.isEmpty, !isReadOnly {
+                onAddSet()
             }
         }
     }

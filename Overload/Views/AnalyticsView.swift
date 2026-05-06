@@ -1,4 +1,5 @@
 import Foundation
+import Charts
 import SwiftData
 import SwiftUI
 
@@ -33,6 +34,9 @@ struct AnalyticsView: View {
                     viewModel?.reload()
                 }
             }
+            .onAppear {
+                viewModel?.reload()
+            }
         }
     }
 }
@@ -43,13 +47,16 @@ private struct AnalyticsContentView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                MuscleGroupSetFocusCard(summaries: viewModel.muscleGroupSetSummaries)
+                MuscleGroupSetFocusCard(
+                    title: viewModel.currentWeekInterval.displayTitle,
+                    summaries: viewModel.muscleGroupSetSummaries
+                )
 
-                ProgressChartCard(
-                    title: "Most Improved: \(viewModel.selectedExercise?.name ?? "Exercise")",
-                    metricLabel: "Estimated 1RM",
+                ProgressionChartCard(
+                    exercises: viewModel.exercises,
+                    selectedExercise: viewModel.selectedExercise,
                     metrics: viewModel.selectedMetrics,
-                    value: viewModel.value(for:)
+                    onSelectExercise: viewModel.selectExercise
                 )
 
                 SimpleAnalyticsCard(title: "Other Stats") {
@@ -61,28 +68,11 @@ private struct AnalyticsContentView: View {
                     SimpleStatRow(label: "Least improved", value: viewModel.dashboardStats.leastImprovedExercise)
                 }
 
-                if !viewModel.insights.isEmpty {
-                    SimpleAnalyticsCard(title: "Insights") {
-                        ForEach(viewModel.insights) { insight in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(insight.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(OverloadTheme.primaryText)
-                                Text(insight.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(OverloadTheme.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
-                }
-
-                if !viewModel.recentRecords.isEmpty {
-                    SimpleAnalyticsCard(title: "Recent PRs") {
-                        ForEach(viewModel.recentRecords) { record in
+                if !viewModel.maxWeightRecords.isEmpty {
+                    SimpleAnalyticsCard(title: "PRs") {
+                        ForEach(viewModel.maxWeightRecords) { record in
                             SimpleStatRow(
-                                label: "\(record.exerciseName) - \(record.title)",
+                                label: record.exerciseName,
                                 value: record.value
                             )
                         }
@@ -98,6 +88,7 @@ private struct AnalyticsContentView: View {
 }
 
 private struct MuscleGroupSetFocusCard: View {
+    var title: String
     var summaries: [MuscleGroupSetSummary]
 
     private var maxCurrentSets: Double {
@@ -108,16 +99,16 @@ private struct MuscleGroupSetFocusCard: View {
         DarkCard {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Sets By Muscle Group")
+                    Text(title)
                         .font(.headline)
                         .foregroundStyle(OverloadTheme.primaryText)
-                    Text("Current week compared with your average week.")
+                    Text("Completed sets by main muscle.")
                         .font(.caption)
                         .foregroundStyle(OverloadTheme.secondaryText)
                 }
 
                 if summaries.isEmpty {
-                    Text("Complete workouts to see weekly set counts.")
+                    Text("Log sets to see weekly muscle totals.")
                         .font(.subheadline)
                         .foregroundStyle(OverloadTheme.secondaryText)
                 } else {
@@ -128,7 +119,7 @@ private struct MuscleGroupSetFocusCard: View {
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(OverloadTheme.primaryText)
                                 Spacer()
-                                Text("\(summary.currentWeekSets) this week")
+                                Text(setCountText(summary.currentWeekSets))
                                     .font(.subheadline.weight(.bold))
                                     .foregroundStyle(OverloadTheme.accent)
                             }
@@ -138,14 +129,13 @@ private struct MuscleGroupSetFocusCard: View {
                                     .font(.caption)
                                     .foregroundStyle(OverloadTheme.secondaryText)
                                 Spacer()
-                                Text("\(summary.totalSets) total")
-                                    .font(.caption)
-                                    .foregroundStyle(OverloadTheme.mutedText)
                             }
 
                             GeometryReader { proxy in
                                 let currentWeekRatio = Double(summary.currentWeekSets) / maxCurrentSets
                                 let barWidth = summary.currentWeekSets == 0 ? 0 : proxy.size.width * max(0.06, currentWeekRatio)
+                                let averageRatio = min(summary.averageSetsPerWeek / maxCurrentSets, 1)
+                                let averageX = proxy.size.width * averageRatio
 
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(OverloadTheme.elevated)
@@ -153,6 +143,12 @@ private struct MuscleGroupSetFocusCard: View {
                                         RoundedRectangle(cornerRadius: 3)
                                             .fill(OverloadTheme.accent)
                                             .frame(width: barWidth)
+                                    }
+                                    .overlay(alignment: .leading) {
+                                        Rectangle()
+                                            .fill(OverloadTheme.primaryText.opacity(0.86))
+                                            .frame(width: 2, height: 15)
+                                            .offset(x: averageX)
                                     }
                             }
                             .frame(height: 7)
@@ -168,6 +164,87 @@ private struct MuscleGroupSetFocusCard: View {
 
     private func format(_ value: Double) -> String {
         value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private func setCountText(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "Set" : "Sets")"
+    }
+}
+
+private struct ProgressionChartCard: View {
+    var exercises: [Exercise]
+    var selectedExercise: Exercise?
+    var metrics: [ExerciseSessionMetrics]
+    var onSelectExercise: (Exercise) -> Void
+
+    var body: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Progression Chart")
+                            .font(.headline)
+                            .foregroundStyle(OverloadTheme.primaryText)
+                        Text("Max weight by logged workout.")
+                            .font(.caption)
+                            .foregroundStyle(OverloadTheme.secondaryText)
+                    }
+
+                    Spacer()
+
+                    Menu {
+                        ForEach(exercises) { exercise in
+                            Button(exercise.name) {
+                                onSelectExercise(exercise)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(selectedExercise?.name ?? "Exercise")
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.caption.weight(.bold))
+                        }
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(OverloadTheme.primaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(OverloadTheme.elevated)
+                        .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
+                    }
+                    .disabled(exercises.isEmpty)
+                }
+
+                if metrics.isEmpty {
+                    ContentUnavailableView(
+                        "No chart data yet",
+                        systemImage: "chart.xyaxis.line",
+                        description: Text("Log this exercise to see progression.")
+                    )
+                    .frame(height: 220)
+                    .foregroundStyle(OverloadTheme.secondaryText)
+                } else {
+                    Chart(metrics) { point in
+                        LineMark(
+                            x: .value("Date", point.date),
+                            y: .value("Max Weight", point.topSetWeight)
+                        )
+                        .foregroundStyle(OverloadTheme.accent)
+                        .interpolationMethod(.catmullRom)
+
+                        PointMark(
+                            x: .value("Date", point.date),
+                            y: .value("Max Weight", point.topSetWeight)
+                        )
+                        .foregroundStyle(.white)
+                    }
+                    .chartYAxis {
+                        AxisMarks(position: .leading)
+                    }
+                    .frame(height: 240)
+                }
+            }
+        }
     }
 }
 

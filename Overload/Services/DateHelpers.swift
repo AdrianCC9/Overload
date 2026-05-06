@@ -18,6 +18,11 @@ extension Date {
         return Calendar.overload.date(from: components)?.startOfDay ?? startOfDay
     }
 
+    var sundayWeekStart: Date {
+        let weekday = Calendar.overload.component(.weekday, from: self)
+        return addingDays(-(weekday - 1)).startOfDay
+    }
+
     var monthStart: Date {
         let components = Calendar.overload.dateComponents([.year, .month], from: self)
         return Calendar.overload.date(from: components)?.startOfDay ?? startOfDay
@@ -57,4 +62,3 @@ enum DateFormatters {
         return formatter
     }()
 }
-

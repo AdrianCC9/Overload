@@ -9,11 +9,13 @@ final class AnalyticsViewModel: ObservableObject {
     @Published private(set) var selectedMetrics: [ExerciseSessionMetrics] = []
     @Published private(set) var insights: [ProgressInsight] = []
     @Published private(set) var dashboardStats = DashboardStats()
+    @Published private(set) var currentWeekInterval = WeekInterval(start: Date.now.sundayWeekStart, end: Date.now.sundayWeekStart.addingDays(6))
     @Published private(set) var muscleGroupSetSummaries: [MuscleGroupSetSummary] = []
     @Published private(set) var muscleGroupVolumes: [MuscleGroupVolume] = []
     @Published private(set) var averageSetsPerMuscleGroup: [MuscleGroupVolume] = []
     @Published private(set) var exerciseFrequency: [ExerciseFrequency] = []
     @Published private(set) var recentRecords: [PersonalRecord] = []
+    @Published private(set) var maxWeightRecords: [PersonalRecord] = []
     @Published var errorMessage: String?
 
     private let exerciseRepository: ExerciseRepository
@@ -27,15 +29,22 @@ final class AnalyticsViewModel: ObservableObject {
     }
 
     func reload() {
-        exercises = exerciseRepository.fetchExercises()
-        selectedExercise = analyticsService.mostImprovedExercise() ?? selectedExercise ?? exercises.first
-        selectedMetric = .estimatedOneRepMax
+        let loggedExercises = analyticsService.loggedExercises()
+        exercises = loggedExercises.isEmpty ? exerciseRepository.fetchExercises() : loggedExercises
+        if let selectedExercise, exercises.contains(where: { $0.id == selectedExercise.id }) {
+            self.selectedExercise = selectedExercise
+        } else {
+            selectedExercise = exercises.first
+        }
+        selectedMetric = .topSetWeight
         dashboardStats = analyticsService.dashboardStats()
+        currentWeekInterval = analyticsService.currentWeekInterval()
         muscleGroupSetSummaries = analyticsService.muscleGroupSetSummaries()
         muscleGroupVolumes = analyticsService.muscleGroupVolumes()
         averageSetsPerMuscleGroup = analyticsService.averageSetsPerMuscleGroupPerWeek()
         exerciseFrequency = analyticsService.exerciseFrequency()
         recentRecords = analyticsService.recentPersonalRecords()
+        maxWeightRecords = analyticsService.maxWeightRecords()
         refreshSelectedExercise()
     }
 
@@ -52,7 +61,7 @@ final class AnalyticsViewModel: ObservableObject {
         }
 
         selectedMetrics = analyticsService.metrics(for: selectedExercise)
-        insights = analyticsService.insights(for: selectedExercise)
+        insights = []
     }
 
     func value(for metrics: ExerciseSessionMetrics) -> Double {

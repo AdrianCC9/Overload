@@ -15,7 +15,8 @@ final class WorkoutPlannerService {
         return Dictionary(grouping: repository.plannedWorkouts(in: start...end)) { $0.plannedDate.startOfDay }
     }
 
-    func plan(template: WorkoutTemplate, on date: Date) throws {
+    @discardableResult
+    func plan(template: WorkoutTemplate, on date: Date) throws -> PlannedWorkout {
         try repository.plan(template: template, on: date)
     }
 
@@ -27,4 +28,3 @@ final class WorkoutPlannerService {
         try repository.move(workout, to: date)
     }
 }
-

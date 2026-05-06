@@ -3,85 +3,105 @@ import SwiftUI
 
 struct WeekView: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var viewModel: WeekViewModel?
-    @State private var activeWorkout: PlannedWorkout?
+
+    var body: some View {
+        WeekContainer(context: modelContext)
+    }
+}
+
+private struct WeekContainer: View {
+    @StateObject private var viewModel: WeekViewModel
+    @State private var activeLogger: LoggerRoute?
+
+    init(context: ModelContext) {
+        _viewModel = StateObject(wrappedValue: WeekViewModel(context: context))
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if let viewModel {
-                    WeekContentView(viewModel: viewModel, activeWorkout: $activeWorkout)
-                } else {
-                    ProgressView()
-                }
-            }
-            .navigationTitle("This Week")
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        viewModel?.moveWeek(by: -1)
-                    } label: {
-                        Image(systemName: "chevron.left")
-                    }
+            WeekContentView(viewModel: viewModel, activeLogger: $activeLogger)
+                .navigationTitle("This Week")
+                .toolbar {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            viewModel.moveWeek(by: -1)
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
 
-                    Button {
-                        viewModel?.referenceDate = .now
-                        viewModel?.reload()
-                    } label: {
-                        Image(systemName: "dot.scope")
-                    }
+                        Button {
+                            viewModel.referenceDate = .now
+                            viewModel.selectedDate = Date.now.startOfDay
+                            viewModel.reload()
+                        } label: {
+                            Image(systemName: "dot.scope")
+                        }
 
-                    Button {
-                        viewModel?.moveWeek(by: 1)
-                    } label: {
-                        Image(systemName: "chevron.right")
+                        Button {
+                            viewModel.moveWeek(by: 1)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                        }
                     }
                 }
-            }
-            .overloadScreenBackground()
-            .task {
-                if viewModel == nil {
-                    viewModel = WeekViewModel(context: modelContext)
-                } else {
-                    viewModel?.reload()
+                .overloadScreenBackground()
+                .onAppear {
+                    viewModel.reload()
                 }
-            }
-            .sheet(item: $activeWorkout, onDismiss: {
-                viewModel?.reload()
-            }) { workout in
-                TemplateExerciseOrderView(workout: workout)
-            }
+                .sheet(item: $activeLogger, onDismiss: {
+                    viewModel.reload()
+                }) { route in
+                    WorkoutLoggerView(
+                        plannedWorkout: route.workout,
+                        focusedExerciseID: route.focusedExerciseID
+                    )
+                }
         }
     }
 }
 
+private struct LoggerRoute: Identifiable {
+    let id = UUID()
+    let workout: PlannedWorkout
+    let focusedExerciseID: UUID?
+}
+
 private struct WeekContentView: View {
     @ObservedObject var viewModel: WeekViewModel
-    @Binding var activeWorkout: PlannedWorkout?
+    @Binding var activeLogger: LoggerRoute?
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 14) {
-                if viewModel.workoutsByDay.isEmpty {
-                    ContentUnavailableView(
-                        "No workouts planned this week",
-                        systemImage: "calendar.badge.plus",
-                        description: Text("Add a workout to any day.")
-                    )
-                    .foregroundStyle(OverloadTheme.secondaryText)
-                    .padding(.top, 80)
-                }
+            VStack(spacing: 22) {
+                WeekDaySelector(
+                    days: viewModel.displayDays,
+                    selectedDate: viewModel.selectedDate,
+                    onSelect: viewModel.select
+                )
 
-                ForEach(viewModel.weekDays, id: \.self) { day in
-                    DayPlanCard(
-                        day: day,
-                        workouts: viewModel.workoutsByDay[day.startOfDay] ?? [],
-                        templates: viewModel.templates(),
-                        onPlan: { template in viewModel.plan(template, on: day) },
-                        onLog: { activeWorkout = $0 },
-                        onSkip: viewModel.markSkipped
-                    )
-                }
+                PlanWorkoutButton(
+                    templates: viewModel.templates(),
+                    onPlan: { template in
+                        if let workout = viewModel.plan(template, on: viewModel.selectedDate) {
+                            activeLogger = LoggerRoute(workout: workout, focusedExerciseID: nil)
+                        }
+                    }
+                )
+
+                SelectedDayWorkoutPanel(
+                    selectedDate: viewModel.selectedDate,
+                    workouts: viewModel.selectedWorkouts,
+                    onOpenWorkout: { workout in
+                        activeLogger = LoggerRoute(workout: workout, focusedExerciseID: nil)
+                    },
+                    onOpenExercise: { workout, templateExercise in
+                        activeLogger = LoggerRoute(
+                            workout: workout,
+                            focusedExerciseID: templateExercise.exercise?.id
+                        )
+                    },
+                    onSkipWorkout: viewModel.markSkipped
+                )
             }
             .padding(16)
         }
@@ -91,119 +111,238 @@ private struct WeekContentView: View {
     }
 }
 
-private struct DayPlanCard: View {
-    var day: Date
-    var workouts: [PlannedWorkout]
-    var templates: [WorkoutTemplate]
-    var onPlan: (WorkoutTemplate) -> Void
-    var onLog: (PlannedWorkout) -> Void
-    var onSkip: (PlannedWorkout) -> Void
-
-    private var isToday: Bool {
-        day.isSameDay(as: .now)
-    }
+private struct WeekDaySelector: View {
+    var days: [Date]
+    var selectedDate: Date
+    var onSelect: (Date) -> Void
 
     var body: some View {
-        DarkCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(DateFormatters.weekday.string(from: day).uppercased())
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(isToday ? OverloadTheme.accent : OverloadTheme.secondaryText)
-                        Text(DateFormatters.shortDisplay.string(from: day))
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(OverloadTheme.primaryText)
-                    }
-                    Spacer()
-                    Menu {
-                        ForEach(templates) { template in
-                            Button(template.name) {
-                                onPlan(template)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(templates.isEmpty ? OverloadTheme.mutedText : OverloadTheme.accent)
-                    }
-                    .disabled(templates.isEmpty)
-                }
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(days, id: \.self) { day in
+                        Button {
+                            onSelect(day)
+                        } label: {
+                            VStack(spacing: 10) {
+                                Text(DateFormatters.weekday.string(from: day))
+                                    .font(.subheadline.weight(.bold))
+                                    .foregroundStyle(day.isSameDay(as: selectedDate) ? Color.white : OverloadTheme.mutedText)
 
-                if workouts.isEmpty {
-                    Text("No workouts planned.")
-                        .font(.subheadline)
-                        .foregroundStyle(OverloadTheme.mutedText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(workouts) { workout in
-                            PlannedWorkoutRow(
-                                workout: workout,
-                                onLog: { onLog(workout) },
-                                onSkip: { onSkip(workout) }
-                            )
+                                VStack(spacing: 2) {
+                                    Text("\(Calendar.overload.component(.day, from: day))")
+                                        .font(.title2.weight(.heavy))
+                                    if day.isSameDay(as: selectedDate) {
+                                        Text(day.formatted(.dateTime.month(.abbreviated)))
+                                            .font(.caption.weight(.heavy))
+                                    }
+                                }
+                                .frame(width: 52, height: 72)
+                                .foregroundStyle(day.isSameDay(as: selectedDate) ? Color.white : OverloadTheme.mutedText)
+                                .background(day.isSameDay(as: selectedDate) ? OverloadTheme.accent : Color.clear)
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            }
+                            .frame(width: 58)
+                            .id(day)
                         }
+                        .buttonStyle(.plain)
                     }
+                }
+                .padding(.horizontal, 2)
+            }
+            .onAppear {
+                scrollToSelectedDay(with: proxy)
+            }
+            .onChange(of: selectedDate) { _, _ in
+                scrollToSelectedDay(with: proxy)
+            }
+            .onChange(of: days) { _, _ in
+                scrollToSelectedDay(with: proxy)
+            }
+        }
+    }
+
+    private func scrollToSelectedDay(with proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.snappy(duration: 0.25)) {
+                if let selectedDay = days.first(where: { $0.isSameDay(as: selectedDate) }) {
+                    proxy.scrollTo(selectedDay, anchor: .center)
                 }
             }
         }
     }
 }
 
-private struct PlannedWorkoutRow: View {
+private struct PlanWorkoutButton: View {
+    var templates: [WorkoutTemplate]
+    var onPlan: (WorkoutTemplate) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(templates) { template in
+                Button(template.name) {
+                    onPlan(template)
+                }
+            }
+        } label: {
+            Text(templates.isEmpty ? "Create a Workout First" : "Start a Workout")
+                .font(.headline.weight(.heavy))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 21)
+                .background(templates.isEmpty ? OverloadTheme.elevated : OverloadTheme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(templates.isEmpty)
+    }
+}
+
+private struct SelectedDayWorkoutPanel: View {
+    var selectedDate: Date
+    var workouts: [PlannedWorkout]
+    var onOpenWorkout: (PlannedWorkout) -> Void
+    var onOpenExercise: (PlannedWorkout, TemplateExercise) -> Void
+    var onSkipWorkout: (PlannedWorkout) -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            if workouts.isEmpty {
+                EmptySelectedDayCard(selectedDate: selectedDate)
+            } else {
+                ForEach(workouts) { workout in
+                    SelectedWorkoutCard(
+                        workout: workout,
+                        onOpenWorkout: { onOpenWorkout(workout) },
+                        onOpenExercise: { templateExercise in
+                            onOpenExercise(workout, templateExercise)
+                        },
+                        onSkip: { onSkipWorkout(workout) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct EmptySelectedDayCard: View {
+    var selectedDate: Date
+
+    var body: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(selectedDate.formatted(.dateTime.weekday(.wide).month().day()))
+                    .font(.headline)
+                    .foregroundStyle(OverloadTheme.primaryText)
+                Text("No workout planned.")
+                    .font(.subheadline)
+                    .foregroundStyle(OverloadTheme.secondaryText)
+                    .padding(.top, 8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+        }
+    }
+}
+
+private struct SelectedWorkoutCard: View {
     var workout: PlannedWorkout
-    var onLog: () -> Void
+    var onOpenWorkout: () -> Void
+    var onOpenExercise: (TemplateExercise) -> Void
     var onSkip: () -> Void
 
-    private var tint: Color {
-        switch workout.status {
-        case .planned:
-            return workout.workoutTemplate?.colorTag.color ?? OverloadTheme.accent
-        case .completed:
-            return OverloadTheme.success
-        case .skipped:
-            return OverloadTheme.warning
-        }
+    private var exercises: [TemplateExercise] {
+        workout.workoutTemplate?.orderedExercises ?? []
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(tint)
-                .frame(width: 4)
+        DarkCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(workout.workoutTemplate?.name ?? "Workout")
+                            .font(.title2.weight(.heavy))
+                            .foregroundStyle(OverloadTheme.primaryText)
+                        Text("\(exercises.count) Exercises")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(OverloadTheme.secondaryText)
+                    }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(workout.workoutTemplate?.name ?? "Workout")
-                    .font(.headline)
-                    .foregroundStyle(OverloadTheme.primaryText)
-                Text(workout.status.label)
-                    .font(.caption)
-                    .foregroundStyle(OverloadTheme.secondaryText)
+                    Spacer()
+
+                    Menu {
+                        Button("Log Workout", action: onOpenWorkout)
+                        Button("Skip", role: .destructive, action: onSkip)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.title3.weight(.heavy))
+                            .foregroundStyle(OverloadTheme.primaryText)
+                            .frame(width: 40, height: 40)
+                    }
+                }
+
+                if exercises.isEmpty {
+                    Text("No exercises added yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(OverloadTheme.secondaryText)
+                        .padding(.vertical, 18)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(exercises) { templateExercise in
+                            Button {
+                                onOpenExercise(templateExercise)
+                            } label: {
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(templateExercise.exercise?.name ?? "Exercise")
+                                            .font(.headline.weight(.heavy))
+                                            .foregroundStyle(OverloadTheme.primaryText)
+                                            .multilineTextAlignment(.leading)
+
+                                        let loggedSets = loggedSets(for: templateExercise)
+                                        if !loggedSets.isEmpty {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                ForEach(loggedSets) { set in
+                                                    Text(setLine(for: set))
+                                                        .font(.subheadline.weight(.semibold))
+                                                        .foregroundStyle(OverloadTheme.mutedText)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    Spacer()
+                                }
+                                .padding(.vertical, 14)
+                            }
+                            .buttonStyle(.plain)
+
+                            if templateExercise.id != exercises.last?.id {
+                                Divider()
+                                    .overlay(OverloadTheme.border)
+                            }
+                        }
+                    }
+                }
             }
-
-            Spacer()
-
-            Button(action: onLog) {
-                Image(systemName: "list.number")
-                    .frame(width: 34, height: 34)
-                    .background(OverloadTheme.elevated)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-
-            Menu {
-                Button("Skip", role: .destructive, action: onSkip)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 34, height: 34)
-                    .background(OverloadTheme.elevated)
-                    .clipShape(Circle())
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .background(OverloadTheme.elevated)
-        .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
+    }
+
+    private func loggedSets(for templateExercise: TemplateExercise) -> [SessionSet] {
+        guard let exerciseID = templateExercise.exercise?.id else { return [] }
+        return workout.linkedSession?.orderedExercises
+            .first { $0.exercise?.id == exerciseID }?
+            .orderedSets
+            .filter { $0.completed }
+        ?? []
+    }
+
+    private func setLine(for set: SessionSet) -> String {
+        "\(set.setNumber). \(set.reps) x \(formattedWeight(set.weight))lbs"
+    }
+
+    private func formattedWeight(_ weight: Double) -> String {
+        weight.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(weight)) : String(format: "%.1f", weight)
     }
 }

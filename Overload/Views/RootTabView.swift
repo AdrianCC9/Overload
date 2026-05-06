@@ -3,6 +3,11 @@ import SwiftUI
 
 struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
+    @AppStorage(OverloadTheme.accentPreferenceKey) private var accentRawValue = AppAccentColor.red.rawValue
+
+    private var accentColor: Color {
+        AppAccentColor(rawValue: accentRawValue)?.color ?? AppAccentColor.red.color
+    }
 
     var body: some View {
         TabView {
@@ -16,14 +21,14 @@ struct RootTabView: View {
                     Label("Calendar", systemImage: "calendar")
                 }
 
-            WorkoutBuilderView()
-                .tabItem {
-                    Label("Builder", systemImage: "dumbbell")
-                }
-
             AnalyticsView()
                 .tabItem {
                     Label("Analytics", systemImage: "chart.xyaxis.line")
+                }
+
+            WorkoutBuilderView()
+                .tabItem {
+                    Label("Builder", systemImage: "dumbbell")
                 }
 
             SettingsView()
@@ -31,7 +36,7 @@ struct RootTabView: View {
                     Label("Settings", systemImage: "gearshape")
                 }
         }
-        .tint(OverloadTheme.accent)
+        .tint(accentColor)
         .task {
             SeedDataService.seedIfNeeded(context: modelContext)
         }
@@ -53,4 +58,3 @@ struct RootTabView: View {
             AnalyticsSnapshot.self
         ], inMemory: true)
 }
-

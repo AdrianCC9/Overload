@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class UserProfile {
+final class UserProfile: Identifiable {
     var id: UUID
     var name: String
     var preferredUnitRaw: String
@@ -25,4 +25,3 @@ final class UserProfile {
         set { preferredUnitRaw = newValue.rawValue }
     }
 }
-

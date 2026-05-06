@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class SessionSet {
+final class SessionSet: Identifiable {
     var id: UUID
     var sessionExercise: SessionExercise?
     var setNumber: Int
@@ -44,4 +44,3 @@ final class SessionSet {
         return AnalyticsMath.estimatedOneRepMax(weight: weight, reps: reps)
     }
 }
-

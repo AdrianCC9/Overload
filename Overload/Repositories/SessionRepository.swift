@@ -18,6 +18,12 @@ final class SessionRepository {
         fetchSessions().filter(\.isCompleted)
     }
 
+    func fetchLoggedSessions() -> [WorkoutSession] {
+        fetchSessions().filter { session in
+            session.isCompleted || session.sessionExercises.contains { !$0.workingSets.isEmpty }
+        }
+    }
+
     func deleteSession(_ session: WorkoutSession) throws {
         session.plannedWorkout?.linkedSession = nil
         session.plannedWorkout?.status = .planned
@@ -29,4 +35,3 @@ final class SessionRepository {
         try context.save()
     }
 }
-

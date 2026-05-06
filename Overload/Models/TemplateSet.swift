@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class TemplateSet {
+final class TemplateSet: Identifiable {
     var id: UUID
     var templateExercise: TemplateExercise?
     var targetReps: Int
@@ -26,4 +26,3 @@ final class TemplateSet {
         self.orderIndex = orderIndex
     }
 }
-

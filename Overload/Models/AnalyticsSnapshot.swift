@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class AnalyticsSnapshot {
+final class AnalyticsSnapshot: Identifiable {
     var id: UUID
     var exercise: Exercise?
     var periodStart: Date
@@ -37,4 +37,3 @@ final class AnalyticsSnapshot {
         set { metricRaw = newValue.rawValue }
     }
 }
-
