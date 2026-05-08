@@ -52,7 +52,8 @@ final class CSVExportService {
                             String(set.reps),
                             decimal(set.weight),
                             decimal(set.volume),
-                            decimal(set.estimatedOneRepMax)
+                            decimal(set.estimatedOneRepMax),
+                            String(isTemplateExercise(sessionExercise, in: session))
                         ]
                     }
             }
@@ -71,7 +72,8 @@ final class CSVExportService {
                 "reps",
                 "weight_lbs",
                 "volume_lbs",
-                "estimated_1rm_lbs"
+                "estimated_1rm_lbs",
+                "is_template_exercise"
             ],
             rows: rows
         )
@@ -317,6 +319,15 @@ final class CSVExportService {
 
     private func decimal(_ value: Double) -> String {
         String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+
+    private func isTemplateExercise(_ sessionExercise: SessionExercise, in session: WorkoutSession) -> Bool {
+        guard let exerciseID = sessionExercise.exercise?.id,
+              let template = session.workoutTemplate else {
+            return false
+        }
+
+        return template.templateExercises.contains { $0.exercise?.id == exerciseID }
     }
 
     private func mainMuscleName(for exercise: Exercise?) -> String {

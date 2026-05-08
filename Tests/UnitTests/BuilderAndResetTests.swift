@@ -56,6 +56,34 @@ final class BuilderAndResetTests: XCTestCase {
         XCTAssertEqual(chest.currentWeekSets, 1)
     }
 
+    func testAnalyticsCountsMultiMuscleExercisesAndIncludesZeroRows() throws {
+        let context = try makeContext()
+        let builder = WorkoutBuilderViewModel(context: context)
+        let template = try XCTUnwrap(builder.createTemplate(name: "Legs", colorTag: .green))
+
+        builder.addCustomExercise(named: "Hack Squat", to: template)
+
+        let plannedWorkout = try WorkoutRepository(context: context).plan(template: template, on: .now)
+        let session = try WorkoutLoggingService(context: context).session(for: plannedWorkout)
+        let sessionExercise = try XCTUnwrap(session.orderedExercises.first)
+
+        try WorkoutLoggingService(context: context).addSet(to: sessionExercise)
+        let set = try XCTUnwrap(sessionExercise.orderedSets.first)
+        set.reps = 10
+        set.weight = 225
+        set.completed = true
+        try context.save()
+
+        let summaries = AnalyticsService(context: context).muscleGroupSetSummaries()
+        let glutes = try XCTUnwrap(summaries.first { $0.muscleGroup == "Glutes" })
+        let quads = try XCTUnwrap(summaries.first { $0.muscleGroup == "Quads" })
+        let chest = try XCTUnwrap(summaries.first { $0.muscleGroup == "Chest" })
+
+        XCTAssertEqual(glutes.currentWeekSets, 1)
+        XCTAssertEqual(quads.currentWeekSets, 1)
+        XCTAssertEqual(chest.currentWeekSets, 0)
+    }
+
     func testAnalyticsWeekIntervalRunsSundayThroughSaturday() throws {
         let context = try makeContext()
         let referenceDate = try XCTUnwrap(DateFormatters.isoDay.date(from: "2026-05-06"))
@@ -143,6 +171,23 @@ final class BuilderAndResetTests: XCTestCase {
         XCTAssertTrue(copiedSet.completed)
     }
 
+    func testLoggerCanAddSessionOnlyExerciseWithoutChangingTemplate() throws {
+        let context = try makeContext()
+        let builder = WorkoutBuilderViewModel(context: context)
+        let template = try XCTUnwrap(builder.createTemplate(name: "Push", colorTag: .red))
+        builder.addCustomExercise(named: "Chest Press", to: template)
+
+        let plannedWorkout = try WorkoutRepository(context: context).plan(template: template, on: .now)
+        let viewModel = WorkoutLoggerViewModel(context: context, plannedWorkout: plannedWorkout)
+        viewModel.load()
+
+        let addedExercise = viewModel.addExercise(named: "Wrist Curl")
+
+        XCTAssertEqual(addedExercise?.exercise?.name, "Wrist Curl")
+        XCTAssertEqual(viewModel.session?.orderedExercises.map { $0.exercise?.name }, ["Chest Press", "Wrist Curl"])
+        XCTAssertEqual(template.orderedExercises.map { $0.exercise?.name }, ["Chest Press"])
+    }
+
     func testExportCreatesSingleLoggedSetCSVOnly() throws {
         let context = try makeContext()
         let builder = WorkoutBuilderViewModel(context: context)
@@ -201,6 +246,22 @@ final class BuilderAndResetTests: XCTestCase {
         XCTAssertEqual(fetch(WorkoutTemplate.self, context: context).first?.colorTag, .green)
     }
 
+    func testImportCanRestoreSessionOnlyExercisesWithoutAddingThemToTemplate() throws {
+        let context = try makeContext()
+        let csv = """
+        session_id,date,day,workout_name,workout_color,exercise_name,muscle_group,set_number,reps,weight_lbs,volume_lbs,estimated_1rm_lbs,is_template_exercise
+        33333333-3333-3333-3333-333333333333,2026-05-05,Tuesday,Push,red,Forearm Curl,Forearms,1,12,35.00,420.00,49.00,false
+        """
+
+        _ = try CSVImportService().importLoggedData(csv: csv, context: context)
+
+        let session = try XCTUnwrap(fetch(WorkoutSession.self, context: context).first)
+        let template = try XCTUnwrap(session.workoutTemplate)
+
+        XCTAssertEqual(session.orderedExercises.map { $0.exercise?.name }, ["Forearm Curl"])
+        XCTAssertTrue(template.orderedExercises.isEmpty)
+    }
+
     func testScreenshotExercisesAreSeededByExactName() throws {
         let expectedExercises: [(name: String, category: ExerciseCategory)] = [
             ("Chest Fly", .chest),
@@ -218,9 +279,12 @@ final class BuilderAndResetTests: XCTestCase {
             ("Ab Curl", .core),
             ("Leg Extension", .quads),
             ("Hack Squat", .quads),
+            ("Barbell Lunge", .quads),
             ("Hamstring Curl", .hamstrings),
             ("Hip Thrust", .glutes),
-            ("Calf Raise", .calves)
+            ("Calf Raise", .calves),
+            ("Calf Raises", .calves),
+            ("Dips", .triceps)
         ]
         let seedsByName = ExerciseMuscleRepository.commonExerciseSeeds.reduce(into: [String: ExerciseCategory]()) {
             $0[$1.name] = $1.category

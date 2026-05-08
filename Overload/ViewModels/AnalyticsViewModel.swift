@@ -20,10 +20,12 @@ final class AnalyticsViewModel: ObservableObject {
 
     private let exerciseRepository: ExerciseRepository
     private let analyticsService: AnalyticsService
+    private let volumeGoalStore: VolumeGoalStore
 
-    init(context: ModelContext) {
+    init(context: ModelContext, volumeGoalStore: VolumeGoalStore = VolumeGoalStore()) {
         self.exerciseRepository = ExerciseRepository(context: context)
         self.analyticsService = AnalyticsService(context: context)
+        self.volumeGoalStore = volumeGoalStore
         try? exerciseRepository.seedExercisesIfNeeded()
         reload()
     }
@@ -39,7 +41,7 @@ final class AnalyticsViewModel: ObservableObject {
         selectedMetric = .topSetWeight
         dashboardStats = analyticsService.dashboardStats()
         currentWeekInterval = analyticsService.currentWeekInterval()
-        muscleGroupSetSummaries = analyticsService.muscleGroupSetSummaries()
+        muscleGroupSetSummaries = analyticsService.muscleGroupSetSummaries(volumeGoals: volumeGoalStore.goals())
         muscleGroupVolumes = analyticsService.muscleGroupVolumes()
         averageSetsPerMuscleGroup = analyticsService.averageSetsPerMuscleGroupPerWeek()
         exerciseFrequency = analyticsService.exerciseFrequency()
@@ -51,6 +53,18 @@ final class AnalyticsViewModel: ObservableObject {
     func selectExercise(_ exercise: Exercise) {
         selectedExercise = exercise
         refreshSelectedExercise()
+    }
+
+    func setVolumeGoal(for muscleGroup: String, sets: Int?) {
+        volumeGoalStore.setGoal(sets, for: muscleGroup)
+        reload()
+    }
+
+    func setVolumeGoals(_ goals: [String: Int?]) {
+        goals.forEach { muscleGroup, sets in
+            volumeGoalStore.setGoal(sets, for: muscleGroup)
+        }
+        reload()
     }
 
     func refreshSelectedExercise() {
@@ -66,5 +80,45 @@ final class AnalyticsViewModel: ObservableObject {
 
     func value(for metrics: ExerciseSessionMetrics) -> Double {
         analyticsService.value(for: selectedMetric, in: metrics)
+    }
+}
+
+struct VolumeGoalStore {
+    private let key: String
+    private let defaults: UserDefaults
+
+    init(key: String = "overloadWeeklyVolumeGoalsByMuscle", defaults: UserDefaults = .standard) {
+        self.key = key
+        self.defaults = defaults
+    }
+
+    func goals() -> [String: Int] {
+        let rawGoals = defaults.dictionary(forKey: key) ?? [:]
+        return rawGoals.reduce(into: [String: Int]()) { result, item in
+            let goal: Int?
+            if let value = item.value as? Int {
+                goal = value
+            } else if let value = item.value as? NSNumber {
+                goal = value.intValue
+            } else if let value = item.value as? String {
+                goal = Int(value)
+            } else {
+                goal = nil
+            }
+
+            if let goal, goal > 0 {
+                result[item.key] = goal
+            }
+        }
+    }
+
+    func setGoal(_ goal: Int?, for muscleGroup: String) {
+        var currentGoals = goals()
+        if let goal, goal > 0 {
+            currentGoals[muscleGroup] = goal
+        } else {
+            currentGoals.removeValue(forKey: muscleGroup)
+        }
+        defaults.set(currentGoals, forKey: key)
     }
 }

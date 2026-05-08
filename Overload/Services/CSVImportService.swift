@@ -55,7 +55,10 @@ final class CSVImportService {
                 context: context,
                 exercisesByName: &exercisesByName
             )
-            ensureTemplate(template, contains: exercise, context: context)
+            let shouldAddToTemplate = boolValue("is_template_exercise", in: row, headerLookup: headerLookup, defaultValue: true)
+            if shouldAddToTemplate {
+                ensureTemplate(template, contains: exercise, context: context)
+            }
 
             let session = importedSessionsByID[sessionID] ?? createSession(
                 id: sessionID,
@@ -170,6 +173,19 @@ final class CSVImportService {
 
     private func doubleValue(_ column: String, in row: [String], headerLookup: [String: Int]) -> Double? {
         Double(value(column, in: row, headerLookup: headerLookup))
+    }
+
+    private func boolValue(_ column: String, in row: [String], headerLookup: [String: Int], defaultValue: Bool) -> Bool {
+        let rawValue = value(column, in: row, headerLookup: headerLookup).lowercased()
+        guard !rawValue.isEmpty else { return defaultValue }
+
+        if ["true", "yes", "1"].contains(rawValue) {
+            return true
+        }
+        if ["false", "no", "0"].contains(rawValue) {
+            return false
+        }
+        return defaultValue
     }
 
     private func date(from string: String) -> Date? {

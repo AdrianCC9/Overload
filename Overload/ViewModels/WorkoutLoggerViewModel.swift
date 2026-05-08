@@ -70,6 +70,21 @@ final class WorkoutLoggerViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func addExercise(named name: String) -> SessionExercise? {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let session, !trimmedName.isEmpty else { return nil }
+
+        do {
+            let sessionExercise = try loggingService.addExercise(named: trimmedName, to: session)
+            objectWillChange.send()
+            return sessionExercise
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     func removeSet(_ set: SessionSet) {
         do {
             try loggingService.removeSet(set)

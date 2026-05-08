@@ -49,7 +49,8 @@ private struct AnalyticsContentView: View {
             VStack(spacing: 16) {
                 MuscleGroupSetFocusCard(
                     title: viewModel.currentWeekInterval.displayTitle,
-                    summaries: viewModel.muscleGroupSetSummaries
+                    summaries: viewModel.muscleGroupSetSummaries,
+                    onSetVolumeGoals: viewModel.setVolumeGoals
                 )
 
                 ProgressionChartCard(
@@ -90,6 +91,9 @@ private struct AnalyticsContentView: View {
 private struct MuscleGroupSetFocusCard: View {
     var title: String
     var summaries: [MuscleGroupSetSummary]
+    var onSetVolumeGoals: ([String: Int?]) -> Void
+
+    @State private var isEditingGoals = false
 
     private var maxCurrentSets: Double {
         Double(max(summaries.map(\.currentWeekSets).max() ?? 1, 1))
@@ -102,10 +106,23 @@ private struct MuscleGroupSetFocusCard: View {
                     Text(title)
                         .font(.headline)
                         .foregroundStyle(OverloadTheme.primaryText)
-                    Text("Completed sets by main muscle.")
+                    Text("Completed sets by muscle group.")
                         .font(.caption)
                         .foregroundStyle(OverloadTheme.secondaryText)
                 }
+
+                Button {
+                    isEditingGoals = true
+                } label: {
+                    Label("Set Volume Goals", systemImage: "target")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(OverloadTheme.primaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(OverloadTheme.elevated)
+                        .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
+                }
+                .buttonStyle(.plain)
 
                 if summaries.isEmpty {
                     Text("Log sets to see weekly muscle totals.")
@@ -129,26 +146,23 @@ private struct MuscleGroupSetFocusCard: View {
                                     .font(.caption)
                                     .foregroundStyle(OverloadTheme.secondaryText)
                                 Spacer()
+                                if let goal = summary.volumeGoalSets {
+                                    Text("Goal \(goal) \(goal == 1 ? "set" : "sets")")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(summary.currentWeekSets >= goal ? OverloadTheme.success : OverloadTheme.secondaryText)
+                                }
                             }
 
                             GeometryReader { proxy in
-                                let currentWeekRatio = Double(summary.currentWeekSets) / maxCurrentSets
-                                let barWidth = summary.currentWeekSets == 0 ? 0 : proxy.size.width * max(0.06, currentWeekRatio)
-                                let averageRatio = min(summary.averageSetsPerWeek / maxCurrentSets, 1)
-                                let averageX = proxy.size.width * averageRatio
+                                let barWidth = progressBarWidth(for: summary, in: proxy.size.width)
+                                let didReachGoal = hasReachedGoal(summary)
 
                                 RoundedRectangle(cornerRadius: 3)
                                     .fill(OverloadTheme.elevated)
                                     .overlay(alignment: .leading) {
                                         RoundedRectangle(cornerRadius: 3)
-                                            .fill(OverloadTheme.accent)
+                                            .fill(didReachGoal ? OverloadTheme.success : OverloadTheme.accent)
                                             .frame(width: barWidth)
-                                    }
-                                    .overlay(alignment: .leading) {
-                                        Rectangle()
-                                            .fill(OverloadTheme.primaryText.opacity(0.86))
-                                            .frame(width: 2, height: 15)
-                                            .offset(x: averageX)
                                     }
                             }
                             .frame(height: 7)
@@ -160,6 +174,28 @@ private struct MuscleGroupSetFocusCard: View {
                 }
             }
         }
+        .sheet(isPresented: $isEditingGoals) {
+            VolumeGoalEditorView(summaries: summaries) { goals in
+                onSetVolumeGoals(goals)
+            }
+        }
+    }
+
+    private func hasReachedGoal(_ summary: MuscleGroupSetSummary) -> Bool {
+        guard let goal = summary.volumeGoalSets else { return false }
+        return summary.currentWeekSets >= goal
+    }
+
+    private func progressBarWidth(for summary: MuscleGroupSetSummary, in availableWidth: CGFloat) -> CGFloat {
+        let ratio: Double
+        if let goal = summary.volumeGoalSets {
+            ratio = min(Double(summary.currentWeekSets) / Double(goal), 1)
+        } else {
+            ratio = Double(summary.currentWeekSets) / maxCurrentSets
+        }
+
+        guard summary.currentWeekSets > 0 else { return 0 }
+        return availableWidth * max(0.06, ratio)
     }
 
     private func format(_ value: Double) -> String {
@@ -168,6 +204,83 @@ private struct MuscleGroupSetFocusCard: View {
 
     private func setCountText(_ count: Int) -> String {
         "\(count) \(count == 1 ? "Set" : "Sets")"
+    }
+}
+
+private struct VolumeGoalEditorView: View {
+    @Environment(\.dismiss) private var dismiss
+    var summaries: [MuscleGroupSetSummary]
+    var onSave: ([String: Int?]) -> Void
+    @State private var goalInputs: [String: String]
+
+    init(summaries: [MuscleGroupSetSummary], onSave: @escaping ([String: Int?]) -> Void) {
+        self.summaries = summaries
+        self.onSave = onSave
+        _goalInputs = State(initialValue: Dictionary(uniqueKeysWithValues: summaries.map { summary in
+            (summary.muscleGroup, summary.volumeGoalSets.map(String.init) ?? "")
+        }))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Weekly Set Goals") {
+                    ForEach(summaries) { summary in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(summary.muscleGroup)
+                                    .foregroundStyle(OverloadTheme.primaryText)
+                                Text("This week: \(summary.currentWeekSets) \(summary.currentWeekSets == 1 ? "set" : "sets")")
+                                    .font(.caption)
+                                    .foregroundStyle(OverloadTheme.secondaryText)
+                            }
+
+                            Spacer()
+
+                            TextField("0", text: Binding(
+                                get: { goalInputs[summary.muscleGroup] ?? "" },
+                                set: { goalInputs[summary.muscleGroup] = sanitizedGoalInput($0) }
+                            ))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 72)
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OverloadTheme.background)
+            .navigationTitle("Volume Goals")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(goals())
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func sanitizedGoalInput(_ input: String) -> String {
+        input.filter(\.isNumber)
+    }
+
+    private func goals() -> [String: Int?] {
+        summaries.reduce(into: [String: Int?]()) { result, summary in
+            let input = (goalInputs[summary.muscleGroup] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if let goal = Int(input) {
+                result[summary.muscleGroup] = goal
+            } else {
+                result[summary.muscleGroup] = .some(nil)
+            }
+        }
     }
 }
 

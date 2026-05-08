@@ -61,6 +61,7 @@ private struct LoggerContentView: View {
     @Bindable var session: WorkoutSession
     var onClose: () -> Void
     @State private var editingCompletedSession = false
+    @State private var isAddingExercise = false
 
     private var isReadOnly: Bool {
         session.isCompleted && !editingCompletedSession
@@ -128,6 +129,21 @@ private struct LoggerContentView: View {
                     )
                 }
 
+                if !viewModel.isFocusedExerciseMode && !isReadOnly {
+                    Button {
+                        isAddingExercise = true
+                    } label: {
+                        Label("Add Exercise", systemImage: "plus.circle.fill")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(OverloadTheme.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(OverloadTheme.elevated)
+                            .clipShape(RoundedRectangle(cornerRadius: OverloadTheme.cornerRadius, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 if session.isCompleted {
                     if editingCompletedSession {
                         RedPrimaryButton(title: "Save Changes", systemImage: "checkmark") {
@@ -151,6 +167,44 @@ private struct LoggerContentView: View {
                 }
             }
             .padding(16)
+        }
+        .sheet(isPresented: $isAddingExercise) {
+            AddSessionExerciseSheet { exerciseName in
+                viewModel.addExercise(named: exerciseName)
+            }
+        }
+    }
+}
+
+private struct AddSessionExerciseSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var onAdd: (String) -> Void
+    @State private var name = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Exercise") {
+                    TextField("Name", text: $name)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OverloadTheme.background)
+            .navigationTitle("Add Exercise")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        onAdd(name.trimmingCharacters(in: .whitespacesAndNewlines))
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
     }
 }

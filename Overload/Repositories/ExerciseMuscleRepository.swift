@@ -7,6 +7,7 @@ enum ExerciseMuscleRepository {
         ("Ab Wheel Rollout", .core),
         ("Arnold Press", .shoulders),
         ("Back Extension", .back),
+        ("Barbell Lunge", .quads),
         ("Barbell Curl", .biceps),
         ("Barbell Row", .back),
         ("Bench Press", .chest),
@@ -20,6 +21,7 @@ enum ExerciseMuscleRepository {
         ("Triceps Extension", .triceps),
         ("Calf Press", .calves),
         ("Calf Raise", .calves),
+        ("Calf Raises", .calves),
         ("Chest Fly", .chest),
         ("Chest Press", .chest),
         ("Chin-Up", .back),
@@ -30,6 +32,7 @@ enum ExerciseMuscleRepository {
         ("Hamstring Curl", .hamstrings),
         ("Decline Bench Press", .chest),
         ("Dip", .triceps),
+        ("Dips", .triceps),
         ("Dumbbell Bench Press", .chest),
         ("Dumbbell Curl", .biceps),
         ("Dumbbell Fly", .chest),
@@ -86,6 +89,30 @@ enum ExerciseMuscleRepository {
         ("Wrist Curl", .forearms)
     ]
 
+    static let standardAnalyticsCategories: [ExerciseCategory] = [
+        .chest,
+        .back,
+        .shoulders,
+        .biceps,
+        .triceps,
+        .forearms,
+        .quads,
+        .hamstrings,
+        .glutes,
+        .calves,
+        .core,
+        .traps
+    ]
+
+    static func categories(for exerciseName: String) -> [ExerciseCategory] {
+        let normalizedName = normalized(exerciseName)
+        if let exactMatch = multiCategoryLookup[normalizedName] {
+            return exactMatch
+        }
+
+        return [category(for: exerciseName)]
+    }
+
     static func category(for exerciseName: String) -> ExerciseCategory {
         let normalizedName = normalized(exerciseName)
         if let exactMatch = lookup[normalizedName] {
@@ -140,5 +167,17 @@ enum ExerciseMuscleRepository {
 
     private static let lookup: [String: ExerciseCategory] = Dictionary(
         uniqueKeysWithValues: commonExerciseSeeds.map { (normalized($0.name), $0.category) }
+    )
+
+    private static let multiCategorySeeds: [(name: String, categories: [ExerciseCategory])] = [
+        ("Dips", [.triceps]),
+        ("Calf Raises", [.calves]),
+        ("Hack Squat", [.glutes, .quads]),
+        ("Barbell Lunge", [.glutes, .quads]),
+        ("Reverse Fly", [.back, .shoulders])
+    ]
+
+    private static let multiCategoryLookup: [String: [ExerciseCategory]] = Dictionary(
+        uniqueKeysWithValues: multiCategorySeeds.map { (normalized($0.name), $0.categories) }
     )
 }

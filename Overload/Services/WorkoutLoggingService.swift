@@ -48,6 +48,28 @@ final class WorkoutLoggingService {
         try context.save()
     }
 
+    func addExercise(named name: String, to session: WorkoutSession) throws -> SessionExercise {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let exercise = try ExerciseRepository(context: context).findOrCreateExercise(name: trimmedName)
+        return try addExercise(exercise, to: session)
+    }
+
+    func addExercise(_ exercise: Exercise, to session: WorkoutSession) throws -> SessionExercise {
+        if let existing = session.sessionExercises.first(where: { $0.exercise?.id == exercise.id }) {
+            return existing
+        }
+
+        let nextOrderIndex = (session.sessionExercises.map(\.orderIndex).max() ?? -1) + 1
+        let sessionExercise = SessionExercise(
+            exercise: exercise,
+            orderIndex: nextOrderIndex
+        )
+        context.insert(sessionExercise)
+        session.sessionExercises.append(sessionExercise)
+        try context.save()
+        return sessionExercise
+    }
+
     func removeSet(_ set: SessionSet) throws {
         let sessionExercise = set.sessionExercise
         if let sessionExercise {

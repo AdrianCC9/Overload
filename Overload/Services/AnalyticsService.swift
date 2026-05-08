@@ -30,6 +30,7 @@ struct MuscleGroupSetSummary: Identifiable, Equatable {
     var currentWeekSets: Int
     var totalSets: Int
     var loggedWeeks: Int
+    var volumeGoalSets: Int? = nil
 }
 
 struct ExerciseFrequency: Identifiable, Equatable {
@@ -167,11 +168,13 @@ final class AnalyticsService {
         return stats
     }
 
-    func muscleGroupSetSummaries(referenceDate: Date = .now) -> [MuscleGroupSetSummary] {
+    func muscleGroupSetSummaries(referenceDate: Date = .now, volumeGoals: [String: Int] = [:]) -> [MuscleGroupSetSummary] {
         let sessions = fetchCompletedSessions()
         let currentWeekStart = referenceDate.sundayWeekStart
         let currentWeekEnd = currentWeekStart.addingDays(7)
         let loggedWeeks = max(Set(sessions.map { weekKey(for: $0.date) }).count, 1)
+        let standardGroups = ExerciseMuscleRepository.standardAnalyticsCategories.map(\.rawValue)
+        let standardGroupOrder = Dictionary(uniqueKeysWithValues: standardGroups.enumerated().map { ($0.element, $0.offset) })
 
         struct SetAccumulator {
             var total: Int = 0
@@ -182,27 +185,37 @@ final class AnalyticsService {
             for sessionExercise in session.sessionExercises {
                 let setCount = sessionExercise.workingSets.count
                 guard setCount > 0 else { continue }
-                let group = mainMuscleName(for: sessionExercise.exercise)
-                result[group, default: SetAccumulator()].total += setCount
+                for group in muscleNames(for: sessionExercise.exercise) {
+                    result[group, default: SetAccumulator()].total += setCount
 
-                if session.date >= currentWeekStart && session.date < currentWeekEnd {
-                    result[group, default: SetAccumulator()].current += setCount
+                    if session.date >= currentWeekStart && session.date < currentWeekEnd {
+                        result[group, default: SetAccumulator()].current += setCount
+                    }
                 }
             }
         }
 
-        return counts
-            .map { group, accumulator in
-                MuscleGroupSetSummary(
+        let allGroups = Set(standardGroups)
+            .union(counts.keys)
+            .union(volumeGoals.keys)
+
+        return allGroups
+            .map { group in
+                let accumulator = counts[group] ?? SetAccumulator()
+                return MuscleGroupSetSummary(
                     muscleGroup: group,
                     averageSetsPerWeek: Double(accumulator.total) / Double(loggedWeeks),
                     currentWeekSets: accumulator.current,
                     totalSets: accumulator.total,
-                    loggedWeeks: loggedWeeks
+                    loggedWeeks: loggedWeeks,
+                    volumeGoalSets: volumeGoals[group]
                 )
             }
             .sorted {
                 if $0.currentWeekSets == $1.currentWeekSets {
+                    if $0.averageSetsPerWeek == $1.averageSetsPerWeek {
+                        return (standardGroupOrder[$0.muscleGroup] ?? Int.max) < (standardGroupOrder[$1.muscleGroup] ?? Int.max)
+                    }
                     return $0.averageSetsPerWeek > $1.averageSetsPerWeek
                 }
                 return $0.currentWeekSets > $1.currentWeekSets
@@ -231,8 +244,9 @@ final class AnalyticsService {
             .flatMap(\.sessionExercises)
             .reduce(into: [String: Double]()) { result, sessionExercise in
                 guard !sessionExercise.workingSets.isEmpty else { return }
-                let group = mainMuscleName(for: sessionExercise.exercise)
-                result[group, default: 0] += sessionExercise.exerciseVolume
+                for group in muscleNames(for: sessionExercise.exercise) {
+                    result[group, default: 0] += sessionExercise.exerciseVolume
+                }
             }
 
         return totals
@@ -262,8 +276,9 @@ final class AnalyticsService {
             .flatMap(\.sessionExercises)
             .reduce(into: [String: Int]()) { result, sessionExercise in
                 guard !sessionExercise.workingSets.isEmpty else { return }
-                let group = mainMuscleName(for: sessionExercise.exercise)
-                result[group, default: 0] += sessionExercise.workingSets.count
+                for group in muscleNames(for: sessionExercise.exercise) {
+                    result[group, default: 0] += sessionExercise.workingSets.count
+                }
             }
 
         let uniqueWeeks = Set(sessions.map { weekKey(for: $0.date) })
@@ -420,7 +435,7 @@ final class AnalyticsService {
         let counts = sessions
             .flatMap(\.sessionExercises)
             .filter { !$0.workingSets.isEmpty }
-            .map { mainMuscleName(for: $0.exercise) }
+            .flatMap { muscleNames(for: $0.exercise) }
             .reduce(into: [String: Int]()) { result, category in
                 result[category, default: 0] += 1
             }
@@ -441,9 +456,19 @@ final class AnalyticsService {
     }
 
     private func mainMuscleName(for exercise: Exercise?) -> String {
-        guard let exercise else { return ExerciseCategory.other.rawValue }
-        let inferredCategory = ExerciseMuscleRepository.category(for: exercise.name)
-        return (inferredCategory == .other ? exercise.category : inferredCategory).rawValue
+        muscleNames(for: exercise).first ?? ExerciseCategory.other.rawValue
+    }
+
+    private func muscleNames(for exercise: Exercise?) -> [String] {
+        guard let exercise else { return [ExerciseCategory.other.rawValue] }
+        let inferredCategories = ExerciseMuscleRepository.categories(for: exercise.name)
+        let categories = inferredCategories == [.other] ? [exercise.category] : inferredCategories
+        return categories.reduce(into: [String]()) { result, category in
+            let name = category.rawValue
+            if !result.contains(name) {
+                result.append(name)
+            }
+        }
     }
 
     private func formatWeight(_ weight: Double) -> String {

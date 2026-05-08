@@ -94,10 +94,10 @@ private struct WeekContentView: View {
                     onOpenWorkout: { workout in
                         activeLogger = LoggerRoute(workout: workout, focusedExerciseID: nil)
                     },
-                    onOpenExercise: { workout, templateExercise in
+                    onOpenExercise: { workout, exerciseID in
                         activeLogger = LoggerRoute(
                             workout: workout,
-                            focusedExerciseID: templateExercise.exercise?.id
+                            focusedExerciseID: exerciseID
                         )
                     },
                     onSkipWorkout: viewModel.markSkipped
@@ -121,26 +121,32 @@ private struct WeekDaySelector: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(days, id: \.self) { day in
+                        let isSelected = day.isSameDay(as: selectedDate)
+                        let isToday = day.isSameDay(as: .now)
+
                         Button {
                             onSelect(day)
                         } label: {
                             VStack(spacing: 10) {
                                 Text(DateFormatters.weekday.string(from: day))
                                     .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(day.isSameDay(as: selectedDate) ? Color.white : OverloadTheme.mutedText)
+                                    .foregroundStyle(isSelected ? Color.white : isToday ? AppAccentColor.red.color : OverloadTheme.mutedText)
 
                                 VStack(spacing: 2) {
                                     Text("\(Calendar.overload.component(.day, from: day))")
                                         .font(.title2.weight(.heavy))
-                                    if day.isSameDay(as: selectedDate) {
-                                        Text(day.formatted(.dateTime.month(.abbreviated)))
-                                            .font(.caption.weight(.heavy))
-                                    }
+                                    Text(isToday ? "Today" : isSelected ? day.formatted(.dateTime.month(.abbreviated)) : "")
+                                        .font(.caption.weight(.heavy))
+                                        .opacity(isToday || isSelected ? 1 : 0)
                                 }
                                 .frame(width: 52, height: 72)
-                                .foregroundStyle(day.isSameDay(as: selectedDate) ? Color.white : OverloadTheme.mutedText)
-                                .background(day.isSameDay(as: selectedDate) ? OverloadTheme.accent : Color.clear)
+                                .foregroundStyle(isSelected ? Color.white : isToday ? AppAccentColor.red.color : OverloadTheme.mutedText)
+                                .background(dayBackground(isSelected: isSelected, isToday: isToday))
                                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(isToday ? AppAccentColor.red.color : Color.clear, lineWidth: 2)
+                                }
                             }
                             .frame(width: 58)
                             .id(day)
@@ -170,6 +176,13 @@ private struct WeekDaySelector: View {
                 }
             }
         }
+    }
+
+    private func dayBackground(isSelected: Bool, isToday: Bool) -> Color {
+        if isToday {
+            return isSelected ? AppAccentColor.red.color : AppAccentColor.red.color.opacity(0.18)
+        }
+        return isSelected ? OverloadTheme.accent : Color.clear
     }
 }
 
@@ -202,7 +215,7 @@ private struct SelectedDayWorkoutPanel: View {
     var selectedDate: Date
     var workouts: [PlannedWorkout]
     var onOpenWorkout: (PlannedWorkout) -> Void
-    var onOpenExercise: (PlannedWorkout, TemplateExercise) -> Void
+    var onOpenExercise: (PlannedWorkout, UUID?) -> Void
     var onSkipWorkout: (PlannedWorkout) -> Void
 
     var body: some View {
@@ -214,8 +227,8 @@ private struct SelectedDayWorkoutPanel: View {
                     SelectedWorkoutCard(
                         workout: workout,
                         onOpenWorkout: { onOpenWorkout(workout) },
-                        onOpenExercise: { templateExercise in
-                            onOpenExercise(workout, templateExercise)
+                        onOpenExercise: { exerciseID in
+                            onOpenExercise(workout, exerciseID)
                         },
                         onSkip: { onSkipWorkout(workout) }
                     )
@@ -247,11 +260,39 @@ private struct EmptySelectedDayCard: View {
 private struct SelectedWorkoutCard: View {
     var workout: PlannedWorkout
     var onOpenWorkout: () -> Void
-    var onOpenExercise: (TemplateExercise) -> Void
+    var onOpenExercise: (UUID?) -> Void
     var onSkip: () -> Void
 
-    private var exercises: [TemplateExercise] {
-        workout.workoutTemplate?.orderedExercises ?? []
+    private var exerciseRows: [SelectedWorkoutExerciseRow] {
+        let templateExercises = workout.workoutTemplate?.orderedExercises ?? []
+        let templateIDs = Set(templateExercises.compactMap { $0.exercise?.id })
+        let templateRows = templateExercises.map { templateExercise in
+            SelectedWorkoutExerciseRow(
+                id: templateExercise.id,
+                exerciseID: templateExercise.exercise?.id,
+                name: templateExercise.exercise?.name ?? "Exercise",
+                isSessionOnly: false,
+                loggedSets: loggedSets(forExerciseID: templateExercise.exercise?.id)
+            )
+        }
+
+        let sessionOnlyRows = workout.linkedSession?.orderedExercises
+            .filter { sessionExercise in
+                guard let exerciseID = sessionExercise.exercise?.id else { return false }
+                return !templateIDs.contains(exerciseID)
+            }
+            .map { sessionExercise in
+                SelectedWorkoutExerciseRow(
+                    id: sessionExercise.id,
+                    exerciseID: sessionExercise.exercise?.id,
+                    name: sessionExercise.exercise?.name ?? "Exercise",
+                    isSessionOnly: true,
+                    loggedSets: sessionExercise.orderedSets.filter { $0.completed }
+                )
+            }
+        ?? []
+
+        return templateRows + sessionOnlyRows
     }
 
     var body: some View {
@@ -262,7 +303,7 @@ private struct SelectedWorkoutCard: View {
                         Text(workout.workoutTemplate?.name ?? "Workout")
                             .font(.title2.weight(.heavy))
                             .foregroundStyle(OverloadTheme.primaryText)
-                        Text("\(exercises.count) Exercises")
+                        Text("\(exerciseRows.count) Exercises")
                             .font(.title3.weight(.bold))
                             .foregroundStyle(OverloadTheme.secondaryText)
                     }
@@ -280,28 +321,33 @@ private struct SelectedWorkoutCard: View {
                     }
                 }
 
-                if exercises.isEmpty {
+                if exerciseRows.isEmpty {
                     Text("No exercises added yet.")
                         .font(.subheadline)
                         .foregroundStyle(OverloadTheme.secondaryText)
                         .padding(.vertical, 18)
                 } else {
                     VStack(spacing: 0) {
-                        ForEach(exercises) { templateExercise in
+                        ForEach(Array(exerciseRows.enumerated()), id: \.element.id) { index, row in
                             Button {
-                                onOpenExercise(templateExercise)
+                                onOpenExercise(row.exerciseID)
                             } label: {
                                 HStack(alignment: .top) {
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(templateExercise.exercise?.name ?? "Exercise")
+                                        Text(row.name)
                                             .font(.headline.weight(.heavy))
                                             .foregroundStyle(OverloadTheme.primaryText)
                                             .multilineTextAlignment(.leading)
 
-                                        let loggedSets = loggedSets(for: templateExercise)
-                                        if !loggedSets.isEmpty {
+                                        if row.isSessionOnly {
+                                            Text("Added to this workout")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(OverloadTheme.secondaryText)
+                                        }
+
+                                        if !row.loggedSets.isEmpty {
                                             VStack(alignment: .leading, spacing: 2) {
-                                                ForEach(loggedSets) { set in
+                                                ForEach(row.loggedSets) { set in
                                                     Text(setLine(for: set))
                                                         .font(.subheadline.weight(.semibold))
                                                         .foregroundStyle(OverloadTheme.mutedText)
@@ -317,7 +363,7 @@ private struct SelectedWorkoutCard: View {
                             }
                             .buttonStyle(.plain)
 
-                            if templateExercise.id != exercises.last?.id {
+                            if index != exerciseRows.count - 1 {
                                 Divider()
                                     .overlay(OverloadTheme.border)
                             }
@@ -329,8 +375,8 @@ private struct SelectedWorkoutCard: View {
         }
     }
 
-    private func loggedSets(for templateExercise: TemplateExercise) -> [SessionSet] {
-        guard let exerciseID = templateExercise.exercise?.id else { return [] }
+    private func loggedSets(forExerciseID exerciseID: UUID?) -> [SessionSet] {
+        guard let exerciseID else { return [] }
         return workout.linkedSession?.orderedExercises
             .first { $0.exercise?.id == exerciseID }?
             .orderedSets
@@ -345,4 +391,12 @@ private struct SelectedWorkoutCard: View {
     private func formattedWeight(_ weight: Double) -> String {
         weight.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(weight)) : String(format: "%.1f", weight)
     }
+}
+
+private struct SelectedWorkoutExerciseRow: Identifiable {
+    var id: UUID
+    var exerciseID: UUID?
+    var name: String
+    var isSessionOnly: Bool
+    var loggedSets: [SessionSet]
 }
